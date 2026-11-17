@@ -280,6 +280,15 @@ function renderAccount() {
     </section><section class="card stack account-card"><h2>Respaldo de datos</h2><p>Descarga una copia para mover tus catálogos y pedidos a otro dispositivo o a tu cuenta.</p>
     <div class="actions"><button id="backup-workspace">Descargar respaldo</button><label>Importar respaldo<input type="file" id="restore-workspace" accept=".json,application/json"></label></div></section>`
 }
+function renderGuide() {
+  app.innerHTML = intro('Guía de uso', 'De la lista de precios al pedido.') + `<ol class="guide-grid">
+    <li class="card"><span class="guide-number" aria-hidden="true">01</span><h2>Conecta tus equipos</h2><p>Entra con el mismo correo en el celular y el computador. En <strong>Cuenta</strong>, guarda el nombre de tu negocio y pulsa <strong>Sincronizar</strong> si quieres verificar que los cambios llegaron.</p><button data-view="account">Ir a Cuenta</button></li>
+    <li class="card"><span class="guide-number" aria-hidden="true">02</span><h2>Agrega un proveedor</h2><p>Guarda su nombre, contacto y, si vas a enviarle pedidos desde la app, su WhatsApp o correo.</p><button data-view="vendors">Ir a Proveedores</button></li>
+    <li class="card"><span class="guide-number" aria-hidden="true">03</span><h2>Carga sus precios</h2><p>Elige el proveedor y carga su lista en PDF, Excel o CSV. Si es una lista completa, deja marcada la opción de reemplazar las ofertas vigentes.</p><button data-view="import">Ir a Catálogos</button></li>
+    <li class="card"><span class="guide-number" aria-hidden="true">04</span><h2>Compara y arma el pedido</h2><p>Busca un producto. Compara el precio por kilo o unidad y el total con IVA. Si dos proveedores usan nombres distintos para el mismo producto, asigna el mismo nombre en <strong>Equivalencia</strong>.</p><button data-view="buy">Ir a Comparar</button></li>
+    <li class="card"><span class="guide-number" aria-hidden="true">05</span><h2>Guarda y envía</h2><p>Ajusta las cantidades y guarda el pedido. Ábrelo desde <strong>Pedidos</strong> para preparar WhatsApp o correo. Después de enviarlo, vuelve y confirma el envío.</p><button data-view="drafts">Ir a Pedidos</button></li>
+    </ol><aside class="card guide-offline"><h2>Si se corta internet</h2><p>Puedes usar los precios descargados y guardar pedidos en este equipo. Al recuperar la conexión, verifica el estado en <strong>Cuenta</strong>.</p></aside>`
+}
 function render() {
   const businessLabel = $('#business-label')
   if (businessLabel) {
@@ -314,6 +323,7 @@ function render() {
   }
   if (view === 'import') renderImport()
   if (view === 'account') renderAccount()
+  if (view === 'guide') renderGuide()
 }
 
 function renderImport() {
