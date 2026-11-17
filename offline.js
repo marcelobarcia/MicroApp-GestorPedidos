@@ -1,4 +1,4 @@
-const version = 'gestor-pedidos-offline-v1'
+const version = 'gestor-pedidos-offline-v2'
 const assets = ['./', './index.html', './style.css', './app.js', './catalog.js', './cloud.js', './cloud-config.js', './plantilla.xlsx']
 self.addEventListener('install', event => {
   event.waitUntil(caches.open(version).then(cache => cache.addAll(assets)))

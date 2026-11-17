@@ -10,6 +10,9 @@ const write = (key, value) => localStorage.setItem(key, JSON.stringify(value))
 let session = read(sessionKey)
 let hooks, timer, running, conflict = false
 let status = ''
+const invitation = typeof location === 'undefined' ? null : new URLSearchParams(location.hash.slice(1))
+let invitationToken = invitation?.get('type') === 'invite' ? invitation.get('access_token') : null
+if (invitationToken) history.replaceState(null, '', location.pathname + location.search)
 const configured = Boolean(config?.url && config?.publishableKey)
 const owner = () => session?.user?.id
 const workspace = () => owner() ? read(keyFor(owner())) : null
@@ -111,6 +114,12 @@ async function login(email, password, signup) {
   await sync()
   return true
 }
+async function completeInvite(password) {
+  if (!invitationToken) throw Error('Abre de nuevo el enlace de invitación.')
+  const user = await request('/auth/v1/user', {method:'PUT', token:invitationToken, body:{password}})
+  await login(user.email, password, false)
+  invitationToken = null
+}
 async function logout() {
   if (running) await running
   if (workspace()?.dirty) throw Error('Hay cambios pendientes. Sincroniza o descarga un respaldo antes de cerrar la sesión.')
@@ -141,6 +150,7 @@ function init(callbacks) {
   setInterval(() => { if (!document.hidden) void sync() }, 30000)
   void sync()
 }
-globalThis.orderCloud = {configured, init, local, sync, login, logout, useRemote, workspace,
+globalThis.orderCloud = {configured, init, local, sync, login, logout, useRemote, workspace, completeInvite,
+  invited: () => Boolean(invitationToken),
   profile: () => session?.user, status: () => status, conflict: () => conflict}
 })()
