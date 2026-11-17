@@ -11,7 +11,7 @@ function localData() {
   try { return JSON.parse(localStorage.getItem(key)) || defaults() } catch { return defaults() }
 }
 let state = cloud?.profile() ? cloud.workspace()?.snapshot ?? defaults() : localData()
-let view = 'buy'
+let view = cloud?.invited?.() ? 'account' : 'buy'
 let query = ''
 const excludedVendors = new Set()
 let review = null
@@ -262,6 +262,12 @@ function renderCart() {
 }
 function renderAccount() {
   const profile = cloud?.profile()
+  if (cloud?.invited?.()) {
+    app.innerHTML = intro('Activa tu cuenta', 'Elige una contraseña para acceder a Gestor de Pedidos.') + `<section class="card account-card">
+      <form id="accept-invite" class="stack"><label>Nueva contraseña<input name="password" type="password" autocomplete="new-password" minlength="8" required></label>
+      <div><button class="primary">Activar cuenta</button></div></form></section>`
+    return
+  }
   app.innerHTML = intro('Cuenta', 'Sincroniza catálogos y pedidos entre tus dispositivos.') + `<section class="card stack account-card">
     ${profile ? `<strong>${h(profile.email)}</strong><p id="cloud-status" role="status">${h(cloud.status() || 'Copia disponible en este equipo.')}</p>
     <div class="actions"><button class="primary" id="sync-now">Sincronizar</button><button id="log-out">Cerrar sesión</button><button id="use-cloud" ${cloud.conflict() ? '' : 'hidden'}>Abrir copia en línea</button></div>` :
@@ -595,6 +601,20 @@ app.addEventListener('submit', async e => {
   e.preventDefault()
   const form = e.target
   const data = new FormData(form)
+  if (form.id === 'accept-invite') {
+    const button = $('button', form)
+    button.disabled = true
+    try {
+      await cloud.completeInvite(data.get('password'))
+      render()
+      notify('Cuenta activada.')
+    } catch (error) {
+      notify(error.message, true)
+    } finally {
+      button.disabled = false
+    }
+    return
+  }
   if (form.id === 'account-login') {
     const buttons = [...form.querySelectorAll('button')]
     buttons.forEach(button => { button.disabled = true })
