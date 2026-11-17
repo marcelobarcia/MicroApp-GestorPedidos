@@ -269,8 +269,10 @@ function renderAccount() {
     return
   }
   app.innerHTML = intro('Cuenta', 'Sincroniza catálogos y pedidos entre tus dispositivos.') + `<section class="card stack account-card">
-    ${profile ? `<strong>${h(profile.email)}</strong><p id="cloud-status" role="status">${h(cloud.status() || 'Copia disponible en este equipo.')}</p>
-    <div class="actions"><button class="primary" id="sync-now">Sincronizar</button><button id="log-out">Cerrar sesión</button><button id="use-cloud" ${cloud.conflict() ? '' : 'hidden'}>Abrir copia en línea</button></div>` :
+    ${profile ? `<div class="account-profile"><strong>${h(profile.email)}</strong><small>Administrador de este espacio</small></div>
+    <form id="business-form" class="fields"><label>Nombre del negocio<input name="businessName" maxlength="80" value="${h(state.businessName)}" placeholder="Ej. Granero Fino" required></label><button class="primary">Guardar nombre</button></form>
+    <p id="cloud-status" role="status">${h(cloud.status() || 'Copia disponible en este equipo.')}</p>
+    <div class="actions"><button id="sync-now">Sincronizar</button><button id="log-out">Cerrar sesión</button><button id="use-cloud" ${cloud.conflict() ? '' : 'hidden'}>Abrir copia en línea</button></div>` :
     cloud?.configured ? `<form id="account-login" class="stack"><label>Correo<input name="email" autocomplete="email" type="email" required></label>
     <label>Contraseña<input name="password" autocomplete="current-password" type="password" minlength="8" required></label>
     <div class="actions"><button class="primary">Iniciar sesión</button><button name="mode" value="signup">Crear cuenta</button></div></form>` :
@@ -279,6 +281,12 @@ function renderAccount() {
     <div class="actions"><button id="backup-workspace">Descargar respaldo</button><label>Importar respaldo<input type="file" id="restore-workspace" accept=".json,application/json"></label></div></section>`
 }
 function render() {
+  const businessLabel = $('#business-label')
+  if (businessLabel) {
+    const name = cloud?.profile() ? state.businessName : ''
+    businessLabel.textContent = name || ''
+    businessLabel.hidden = !name
+  }
   document.querySelectorAll('nav [data-view]').forEach(button => {
     if (button.dataset.view === view) button.setAttribute('aria-current', 'page')
     else button.removeAttribute('aria-current')
@@ -286,7 +294,7 @@ function render() {
   if (view === 'buy') {
     const activeSuppliers = new Set(state.catalogs.filter(catalog => catalog.rows.some(canOrder)).map(catalog => catalog.vendorId))
     app.innerHTML = `<section class="price-hero">
-      <div><h1>Compara precios</h1><p>Encuentra la mejor oferta por kilo o unidad de medida.</p></div>
+      <div><h1>Compara <span>precios</span></h1><p>Encuentra la mejor oferta por kilo o unidad de medida.</p></div>
       <div class="hero-stat"><strong>${activeSuppliers.size}</strong><span>${activeSuppliers.size === 1 ? 'proveedor con precios' : 'proveedores con precios'}</span></div>
     </section>
     <div class="grid"><section><div class="card search-card">
@@ -601,6 +609,16 @@ app.addEventListener('submit', async e => {
   e.preventDefault()
   const form = e.target
   const data = new FormData(form)
+  if (form.id === 'business-form' && cloud?.profile()) {
+    const name = data.get('businessName').trim()
+    if (!name) { notify('Escribe el nombre de tu negocio.'); return }
+    const previousName = state.businessName
+    state.businessName = name
+    if (!save()) { state.businessName = previousName; return }
+    render()
+    notify('Nombre del negocio guardado.')
+    return
+  }
   if (form.id === 'accept-invite') {
     const button = $('button', form)
     button.disabled = true
@@ -703,7 +721,7 @@ async function restoreWorkspace(file) {
     const populated = state.vendors.length || state.catalogs.length || state.drafts.some(order => order.lines.length)
     if (populated && !confirm('¿Reemplazar los datos de este espacio por los del respaldo?')) return
     const previous = state
-    state = incoming
+    state = {...incoming, businessName: state.businessName || incoming.businessName}
     if (!save()) { state = previous; return }
     ensureOrderNumbers()
     render()
