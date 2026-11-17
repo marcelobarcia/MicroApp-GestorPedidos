@@ -146,6 +146,10 @@ button[hidden]{display:none}
 .guide-number{display:grid;place-items:center;min-width:32px;height:30px;border:var(--outline);border-radius:7px;background:var(--accent);font-weight:800}
 .guide-grid li:nth-child(even) .guide-number,.guide-offline{background:var(--mint)}
 .guide-offline h2{margin-bottom:.3rem}
+.guide-install dl{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,220px),1fr));gap:.75rem;margin:0}
+.guide-install dl div{border-left:3px solid var(--accent);padding-left:.55rem}
+.guide-install dt{font-weight:800}
+.guide-install dd{margin:.25rem 0 0;color:var(--muted)}
 .vendor-form{display:grid;grid-template-columns:1.1fr 1fr 1fr 1.35fr auto;gap:.45rem .65rem}
 .vendor-form label{overflow-wrap:anywhere}
 .review{overflow:auto;max-height:62vh;border:1px solid var(--line);border-radius:7px}
