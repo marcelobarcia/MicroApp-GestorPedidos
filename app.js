@@ -177,6 +177,7 @@ function orderMessage(v, lines, withSymbols = false) {
   return [
     `Hola, ${greeting}${withSymbols ? ' \u270B\uFE0F' : '.'}`,
     '', withSymbols ? '\u2705 Detalle del pedido' : bold('Detalle del pedido'),
+    `${bold('Proveedor:')} ${v.name}`, '',
     lines.map((l, index) => {
       const quantity = `${l.qty} ${l.qty === 1 ? 'unidad' : 'unidades'} de ${fmt(l.size)} ${l.unit}`
       return `${index + 1}. ${bold(l.name)}${l.code ? ' (' + l.code + ')' : ''}\n${italic(quantity)} | ${clp(l.net)} neto por unidad\nSubtotal neto: ${clp(l.net * l.qty)}`
