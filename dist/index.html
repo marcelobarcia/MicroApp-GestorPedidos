@@ -10,11 +10,11 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" sizes="180x180" href="icons/apple-touch-icon.png">
 <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
-<link rel="stylesheet" href="style.css?v=5">
+<link rel="stylesheet" href="style.css?v=7">
 <script defer src="catalog.js"></script>
 <script defer src="cloud-config.js"></script>
 <script defer src="cloud.js?v=2"></script>
-<script defer src="app.js?v=6"></script>
+<script defer src="app.js?v=7"></script>
 </head>
 <body>
 <header><div class="topbar"><div class="brand"><span class="logo" aria-hidden="true">↘</span><span>Gestor de Pedidos<small id="business-label" hidden></small></span></div><nav aria-label="Secciones">
@@ -23,6 +23,14 @@
 <button data-view="guide">Guía</button>
 </nav></div></header>
 <main id="app"></main>
+<dialog id="send-dialog" aria-labelledby="send-dialog-title" aria-describedby="send-dialog-message">
+  <h2 id="send-dialog-title">Confirmar envío</h2>
+  <p id="send-dialog-message"></p>
+  <form method="dialog" class="actions">
+    <button value="cancel" autofocus>Cancelar</button>
+    <button class="primary" value="confirm">Marcar como enviado</button>
+  </form>
+</dialog>
 <div id="status" role="status" aria-live="polite"></div>
 </body>
 </html>
