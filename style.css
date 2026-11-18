@@ -147,6 +147,25 @@ button[hidden]{display:none}
 .response-line legend{font-weight:700}
 .response-line .fields{margin-top:.35rem}
 .agreed-price{color:var(--green);font-weight:700}
+.purchase-filters{display:flex;align-items:end;flex-wrap:wrap;gap:.55rem .8rem}
+.purchase-filters button[aria-pressed=true]{background:var(--accent)}
+.purchase-kpis{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:.75rem}
+.purchase-kpis h2{font-size:.9rem;margin-bottom:.18rem}
+.purchase-kpis strong{display:block;font-size:clamp(1.2rem,3vw,1.6rem);overflow-wrap:anywhere;font-variant-numeric:tabular-nums}
+.purchase-total{background:var(--mint)}
+.purchase-panels{display:grid;grid-template-columns:minmax(0,1.7fr) minmax(0,1fr);gap:.75rem;align-items:start}
+.purchase-table{overflow-x:auto}
+.purchase-table th{position:static}
+.purchase-table :is(th,td):not(:first-child){text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
+.purchase-product{border:0;background:transparent;padding:.2rem 0;text-align:left;text-decoration:underline;text-underline-offset:.18em}
+.purchase-product[aria-pressed=true]{color:var(--green)}
+.purchase-bars{list-style:none;display:grid;gap:.6rem;margin:0;padding:0}
+.purchase-bars li>div:first-child{display:flex;justify-content:space-between;gap:.25rem .6rem;flex-wrap:wrap;font-variant-numeric:tabular-nums}
+.purchase-track{height:7px;border-radius:4px;background:var(--line);margin-top:.25rem;overflow:hidden}
+.purchase-track span{display:block;height:100%;background:var(--green);border-radius:inherit}
+.purchase-note{color:var(--muted);margin:0 0 .65rem}
+@media(max-width:740px){.purchase-panels{grid-template-columns:minmax(0,1fr)}}
+@media(max-width:480px){.purchase-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.purchase-total{grid-column:1/-1}}
 .guide-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,275px),1fr));gap:.85rem;list-style:none;margin:0 0 1rem;padding:0}
 .guide-grid li{display:grid;justify-items:start;align-content:start;gap:.5rem;margin:0;box-shadow:2px 2px var(--ink)}
 .guide-grid h2,.guide-offline h2{margin:0}
