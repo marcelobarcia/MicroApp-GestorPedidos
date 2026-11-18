@@ -516,12 +516,24 @@ document.addEventListener('click', e => {
     const group = button.closest('[data-order-vendor]')
     const vendorId = group.dataset.orderVendor
     const order = draft()
-    const record = deliveryState(order, vendorId).find(([channel]) => channel === data.confirmSend)?.[1]
-    if (!record || record.sent || !confirm(`¿Ya enviaste el pedido a ${vendor(vendorId)?.name} por ${channels[data.confirmSend]}?`)) return
-    record.sent = true
-    if (!save()) { record.sent = false; return }
-    $('[data-delivery]', group).innerHTML = deliveryHtml(order, vendorId)
-    notify(orderStatus(order))
+    const channel = data.confirmSend
+    const record = deliveryState(order, vendorId).find(([name]) => name === channel)?.[1]
+    const dialog = $('#send-dialog')
+    if (!record || record.sent || dialog.open) return
+    $('#send-dialog-message').textContent = `¿Ya enviaste el pedido a ${vendor(vendorId)?.name || 'este proveedor'} por ${channels[channel]}?`
+    dialog.returnValue = ''
+    dialog.addEventListener('close', () => {
+      if (dialog.returnValue !== 'confirm' || draft() !== order ||
+          !deliveryState(order, vendorId).some(([name, current]) => name === channel && current === record && !current.sent)) return
+      record.sent = true
+      if (!save()) { record.sent = false; return }
+      const delivery = $('[data-delivery]', group)
+      delivery.innerHTML = deliveryHtml(order, vendorId)
+      delivery.tabIndex = -1
+      delivery.focus()
+      notify(orderStatus(order))
+    }, {once: true})
+    dialog.showModal()
     return
   }
   if (data.view) {
