@@ -17,6 +17,7 @@ const excludedVendors = new Set()
 let review = null
 let editingLine = null
 let editingAlias = null
+let responseEditor = null
 let busy = false
 let noticeTimer
 const money = new Intl.NumberFormat('es-CL', {style: 'currency', currency: 'CLP', maximumFractionDigits: 0})
@@ -61,7 +62,7 @@ const providers = () => options([['','Selecciona un proveedor'], ...state.vendor
 const allOffers = () => state.catalogs.flatMap(c => c.rows.map(row => ({...row, vendorId: c.vendorId, date: c.date})))
 const canOrder = row => row.available && row.net > 0 && row.size > 0
 const samePresentation = (a, b) => a.size === b.size && a.unit === b.unit && (
-  a.signature === b.signature || ((!a.code || !b.code) && fold(a.name) === fold(b.name) && fold(a.origin) === fold(b.origin))
+  (a.signature && a.signature === b.signature) || ((!a.code || !b.code) && fold(a.name) === fold(b.name) && fold(a.origin) === fold(b.origin))
 )
 function priceChange(row) {
   if (!row.previousNet) return ''
@@ -206,19 +207,115 @@ function deliveryState(order, vendorId) {
   const delivery = order.deliveries?.[vendorId] ?? {}
   return Object.entries(delivery).filter(([, record]) => record.version === version)
 }
+function currentAgreement(order, vendorId) {
+  const agreement = order.agreements?.[vendorId]
+  return agreement?.version === orderVersion(orderLines(order, vendorId)) ? agreement : null
+}
+const sentToVendor = (order, vendorId) => deliveryState(order, vendorId).some(([, record]) => record.sent)
 function orderStatus(order) {
   const vendors = [...new Set(order.lines.map(line => line.vendorId))]
   const deliveries = vendors.map(vendorId => deliveryState(order, vendorId))
-  const sent = deliveries.filter(entries => entries.some(([, record]) => record.sent)).length
+  const agreements = vendors.map(vendorId => currentAgreement(order, vendorId)).filter(Boolean)
+  if (agreements.length && agreements.length === vendors.length) return agreements.some(a => a.changed) ? 'Confirmado con cambios' : 'Confirmado'
+  const sent = vendors.filter(vendorId => currentAgreement(order, vendorId) || sentToVendor(order, vendorId)).length
+  if (agreements.length) return `Confirmación parcial · ${agreements.length} de ${vendors.length} proveedores`
   if (sent && sent === vendors.length) return 'Enviado'
   if (sent) return `Envío parcial · ${sent} de ${vendors.length} proveedores`
   if (deliveries.some(entries => entries.length)) return 'Pendiente de confirmar envío'
   return order.saved ? 'Guardado · pendiente de envío' : 'Borrador'
 }
 function deliveryHtml(order, vendorId) {
+  const agreement = currentAgreement(order, vendorId)
+  const status = agreement ? `<span class="tag">${agreement.changed ? 'Confirmado con cambios' : 'Confirmado'}</span>` : ''
+  const response = agreement || sentToVendor(order, vendorId)
+    ? `<button data-vendor-response>Registrar respuesta del proveedor</button>` : ''
   return deliveryState(order, vendorId).map(([channel, record]) => record.sent
     ? `<span class="tag">Enviado por ${channels[channel]}</span>`
-    : `<button data-confirm-send="${channel}">Confirmar envío por ${channels[channel]}</button>`).join('')
+    : `<button data-confirm-send="${channel}">Confirmar envío por ${channels[channel]}</button>`).join('') + status + response
+}
+function responseForm(lines) {
+  return `<form class="stack line-editor" id="vendor-response">
+    <h4>Respuesta del proveedor</h4>
+    <p>Completa solo los precios que cambiaron. Al confirmar, se actualizará el pedido y el precio vigente para futuras compras.</p>
+    ${lines.map(line => `<fieldset class="response-line"><legend>${h(line.name)} · ${fmt(line.size)} ${h(line.unit)}</legend>
+      <small>Precio actual del pedido ${clp(line.net)} neto por unidad de compra</small>
+      <div class="fields"><label>Nuevo precio en CLP<input name="price-${h(line.id)}" type="number" min="0.01" max="999999999" step="0.01" inputmode="decimal" placeholder="${h(line.net)}"></label>
+      <label>Precio indicado por el proveedor<select name="basis-${h(line.id)}">
+        <option value="net">Neto por unidad de compra</option><option value="gross">Con IVA por unidad de compra</option>
+        ${line.size !== 1 ? `<option value="netMeasure">Neto por ${h(line.unit)}</option><option value="grossMeasure">Con IVA por ${h(line.unit)}</option>` : ''}
+      </select></label></div></fieldset>`).join('')}
+    <div class="actions"><button class="primary">Confirmar precio acordado</button><button type="button" id="cancel-response">Cancelar</button></div>
+  </form>`
+}
+function acknowledgePrices(editor, data) {
+  const order = draft()
+  const vendorId = editor.vendorId
+  const lines = orderLines(order, vendorId)
+  if (order.id !== editor.orderId || orderVersion(lines) !== editor.version ||
+      !(currentAgreement(order, vendorId) || sentToVendor(order, vendorId))) {
+    notify('El pedido cambió. Vuelve a abrir la respuesta del proveedor.')
+    return
+  }
+  const original = order.agreements?.[vendorId]?.original ?? lines.map(({id, qty, net, gross}) => ({id, qty, net, gross}))
+  const prices = new Map()
+  for (const line of lines) {
+    const value = data.get(`price-${line.id}`)
+    if (!value) continue
+    const basis = data.get(`basis-${line.id}`) || 'net'
+    const amount = Math.round(Number(value) * (basis.endsWith('Measure') ? line.size : 1))
+    const grossQuoted = basis.startsWith('gross')
+    const net = grossQuoted ? Math.round(amount / 1.19) : amount
+    const gross = grossQuoted ? amount : Math.round(net * 1.19)
+    if (!Number.isSafeInteger(net) || net <= 0 || !Number.isSafeInteger(gross)) { notify('Ingresa un precio válido.'); return }
+    if (net !== line.net || gross !== line.gross) prices.set(line.id, {net, gross})
+  }
+  const catalogs = state.catalogs.slice()
+  const rows = catalogs.filter(catalog => catalog.vendorId === vendorId).flatMap(catalog => catalog.rows)
+  const updates = new Map()
+  const additions = []
+  const quoted = lines.filter(line => prices.has(line.id))
+  const revisedPresentations = []
+  for (const line of quoted) {
+    const price = prices.get(line.id)
+    const group = revisedPresentations.find(item => samePresentation(item.line, line))
+    if (group) {
+      if (group.price.net !== price.net || group.price.gross !== price.gross) {
+        notify(`Ingresa el mismo precio para las líneas de ${line.name} con la misma presentación.`)
+        return
+      }
+    } else revisedPresentations.push({line, price})
+  }
+  for (const {line, price} of revisedPresentations) {
+    const matches = rows.filter(row => samePresentation(row, line))
+    if (matches.length > 1) { notify(`Hay más de una oferta vigente para ${line.name}. Revisa el catálogo del proveedor.`, true); return }
+    const match = matches[0]
+    const current = match || line
+    const updated = {...current, ...price, id: id(), available: true, previousNet: price.net === current.net ? current.previousNet : current.net}
+    if (match) {
+      if (price.net !== current.net || price.gross !== current.gross || !current.available) updates.set(current.id, updated)
+    } else {
+      const {qty, vendorId, date, ...offerRow} = updated
+      additions.push(offerRow)
+    }
+    for (const purchase of lines.filter(row => samePresentation(row, line))) prices.set(purchase.id, price)
+  }
+  const nextLines = order.lines.map(line => prices.has(line.id) && line.vendorId === vendorId ? {...line, ...prices.get(line.id)} : line)
+  const revised = nextLines.filter(line => line.vendorId === vendorId)
+  const changed = revised.some(line => original.some(before => before.id === line.id && (before.net !== line.net || before.gross !== line.gross)))
+  const agreement = {original, changed, version: orderVersion(revised)}
+  const next = {...order, lines: nextLines, agreements: {...order.agreements, [vendorId]: agreement}}
+  const previousState = state
+  state = {
+    ...state,
+    drafts: state.drafts.map(entry => entry === order ? next : entry),
+    catalogs: catalogs.map(catalog => catalog.vendorId === vendorId && catalog.rows.some(row => updates.has(row.id))
+      ? {...catalog, rows: catalog.rows.map(row => updates.get(row.id) || row)} : catalog)
+  }
+  if (additions.length) state.catalogs.push({vendorId, file:'Precios confirmados por el proveedor', date:new Date().toLocaleDateString('es-CL'), rows:additions})
+  if (!save()) { state = previousState; return }
+  responseEditor = null
+  render()
+  notify(prices.size ? 'Respuesta guardada y precios vigentes actualizados.' : 'Respuesta guardada.')
 }
 function freshOrder() {
   const next = {id: id(), name: 'Pedido nuevo', lines: []}
@@ -245,18 +342,25 @@ function renderCart() {
     const v = vendor(vendorId)
     const url = whatsapp(v, lines)
     const mail = emailOrder(v, lines)
-    return `<section class="card" data-order-vendor="${h(vendorId)}"><h3>${h(v?.name || 'Proveedor')}</h3>${lines.map(l => `<div class="item"><div><strong>${h(l.name)}</strong><br><small>${fmt(l.size)} ${l.unit} por unidad de compra · ${clp(l.net)} neto<br>${clp(l.net / l.size)} / ${l.unit} neto</small></div>
+    const agreement = currentAgreement(d, vendorId)
+    return `<section class="card" data-order-vendor="${h(vendorId)}"><h3>${h(v?.name || 'Proveedor')}</h3>${lines.map(l => {
+      const sent = agreement?.original.find(row => row.id === l.id)
+      const adjusted = sent && (sent.net !== l.net || sent.gross !== l.gross)
+      return `<div class="item"><div><strong>${h(l.name)}</strong><br><small>${fmt(l.size)} ${l.unit} por unidad de compra · ${clp(l.net)} neto<br>${clp(l.net / l.size)} / ${l.unit} neto</small>
+      ${adjusted ? `<br><small class="agreed-price">Enviado ${clp(sent.net)} neto · Acordado ${clp(l.net)} neto</small>` : ''}</div>
       <label>Unidades<input class="qty" type="number" min="1" max="99999" step="1" value="${l.qty}" data-qty="${h(l.id)}"></label><div class="actions"><button data-edit-line="${h(l.id)}">Editar</button><button class="danger" data-remove="${h(l.id)}">Quitar</button></div>
       ${editingLine === l.id ? `<form class="stack line-editor" data-line-editor="${h(l.id)}">
         <label>Proveedor y presentación<select name="offer">${options(alternatives(l).map(r => [r.id, `${vendor(r.vendorId)?.name} · ${fmt(r.size)} ${r.unit} · ${clp(r.net)} neto`]), l.id)}</select></label>
         <label>Cantidad de unidades<input name="qty" type="number" min="1" max="99999" step="1" value="${l.qty}" required></label>
         <div class="actions"><button class="primary">Guardar cambios</button><button type="button" id="cancel-edit">Cancelar</button></div>
-      </form>` : ''}</div>`).join('')}
+      </form>` : ''}</div>`
+    }).join('')}
       <div data-subtotal>${totalsHtml(totals(lines))}</div>
       <div class="actions">
       ${url ? `<a class="button primary" data-whatsapp href="${h(url)}" target="_blank" rel="noopener noreferrer">Abrir en WhatsApp ↗</a>` : '<button data-view="vendors">Configurar WhatsApp</button>'}
       ${mail ? `<a class="button" data-order-email href="${h(mail)}">Preparar correo</a>` : '<button data-view="vendors">Configurar correo</button>'}
-      </div><div class="actions delivery" data-delivery>${deliveryHtml(d, vendorId)}</div></section>`
+      </div><div class="actions delivery" data-delivery>${deliveryHtml(d, vendorId)}</div>
+      ${responseEditor?.orderId === d.id && responseEditor.vendorId === vendorId ? responseForm(lines) : ''}</section>`
   }).join('') + `<section class="cart-total"><h3>Total del pedido</h3><div id="order-total">${totalsHtml(total)}</div></section>` : '<p class="empty">Agrega una presentación para empezar.</p>'}
   ${d.lines.length ? '<div class="actions"><button class="primary" id="save-order">Guardar pedido</button><button data-view="drafts">Ver guardados</button></div>' : ''}
   <small>Los pedidos se guardan en este navegador.</small>`
@@ -478,6 +582,19 @@ document.addEventListener('click', e => {
   const button = e.target.closest('button')
   if (!button) return
   const data = button.dataset
+  if ('vendorResponse' in data) {
+    const vendorId = button.closest('[data-order-vendor]').dataset.orderVendor
+    const order = draft()
+    responseEditor = {orderId:order.id, vendorId, version:orderVersion(orderLines(order, vendorId))}
+    renderCart()
+    $('#vendor-response input')?.focus()
+    return
+  }
+  if (button.id === 'cancel-response') {
+    responseEditor = null
+    renderCart()
+    return
+  }
   if (button.id === 'backup-workspace') {
     const source = URL.createObjectURL(new Blob([JSON.stringify(state)], {type:'application/json'}))
     const download = Object.assign(document.createElement('a'), {href:source, download:'gestor-pedidos-respaldo.json'})
@@ -540,6 +657,7 @@ document.addEventListener('click', e => {
     if (data.view === 'buy') query = ''
     view = data.view
     editingLine = null
+    responseEditor = null
     render()
     return
   }
@@ -638,6 +756,10 @@ app.addEventListener('submit', async e => {
   e.preventDefault()
   const form = e.target
   const data = new FormData(form)
+  if (form.id === 'vendor-response' && responseEditor) {
+    acknowledgePrices(responseEditor, data)
+    return
+  }
   if (form.id === 'business-form' && cloud?.profile()) {
     const name = data.get('businessName').trim()
     if (!name) { notify('Escribe el nombre de tu negocio.'); return }

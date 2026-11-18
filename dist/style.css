@@ -142,6 +142,11 @@ button[hidden]{display:none}
 #send-dialog::backdrop{background:#211f2380}
 #send-dialog h2{margin-bottom:.5rem}
 #send-dialog .actions{justify-content:flex-end;margin-top:1rem}
+#vendor-response{margin-top:.65rem}
+.response-line{min-width:0;border:1px solid var(--line);border-radius:7px;padding:.55rem}
+.response-line legend{font-weight:700}
+.response-line .fields{margin-top:.35rem}
+.agreed-price{color:var(--green);font-weight:700}
 .guide-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,275px),1fr));gap:.85rem;list-style:none;margin:0 0 1rem;padding:0}
 .guide-grid li{display:grid;justify-items:start;align-content:start;gap:.5rem;margin:0;box-shadow:2px 2px var(--ink)}
 .guide-grid h2,.guide-offline h2{margin:0}
