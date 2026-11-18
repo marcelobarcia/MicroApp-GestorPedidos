@@ -18,6 +18,8 @@ let review = null
 let editingLine = null
 let editingAlias = null
 let responseEditor = null
+let purchaseRange
+let purchaseProduct = null
 let busy = false
 let noticeTimer
 const money = new Intl.NumberFormat('es-CL', {style: 'currency', currency: 'CLP', maximumFractionDigits: 0})
@@ -302,7 +304,8 @@ function acknowledgePrices(editor, data) {
   const nextLines = order.lines.map(line => prices.has(line.id) && line.vendorId === vendorId ? {...line, ...prices.get(line.id)} : line)
   const revised = nextLines.filter(line => line.vendorId === vendorId)
   const changed = revised.some(line => original.some(before => before.id === line.id && (before.net !== line.net || before.gross !== line.gross)))
-  const agreement = {original, changed, version: orderVersion(revised)}
+  const confirmedOn = order.agreements?.[vendorId]?.confirmedOn || orderDate.format(new Date())
+  const agreement = {original, changed, confirmedOn, version: orderVersion(revised)}
   const next = {...order, lines: nextLines, agreements: {...order.agreements, [vendorId]: agreement}}
   const previousState = state
   state = {
@@ -344,7 +347,7 @@ function renderCart() {
     const mail = emailOrder(v, lines)
     const agreement = currentAgreement(d, vendorId)
     return `<section class="card" data-order-vendor="${h(vendorId)}"><h3>${h(v?.name || 'Proveedor')}</h3>${lines.map(l => {
-      const sent = agreement?.original.find(row => row.id === l.id)
+      const sent = agreement?.original?.find(row => row.id === l.id)
       const adjusted = sent && (sent.net !== l.net || sent.gross !== l.gross)
       return `<div class="item"><div><strong>${h(l.name)}</strong><br><small>${fmt(l.size)} ${l.unit} por unidad de compra · ${clp(l.net)} neto<br>${clp(l.net / l.size)} / ${l.unit} neto</small>
       ${adjusted ? `<br><small class="agreed-price">Enviado ${clp(sent.net)} neto · Acordado ${clp(l.net)} neto</small>` : ''}</div>
@@ -385,13 +388,103 @@ function renderAccount() {
     </section><section class="card stack account-card"><h2>Respaldo de datos</h2><p>Descarga una copia para mover tus catálogos y pedidos a otro dispositivo o a tu cuenta.</p>
     <div class="actions"><button id="backup-workspace">Descargar respaldo</button><label>Importar respaldo<input type="file" id="restore-workspace" accept=".json,application/json"></label></div></section>`
 }
+function purchasePeriods() {
+  const today = orderDate.format(new Date())
+  const [year, month] = today.split('-').map(Number)
+  const previousEnd = new Date(Date.UTC(year, month - 1, 0)).toISOString().slice(0, 10)
+  return {current:[today.slice(0, 7) + '-01', today], previous:[previousEnd.slice(0, 7) + '-01', previousEnd]}
+}
+function confirmedPurchases() {
+  return state.drafts.flatMap(order => {
+    const base = order.numberBase.replace(/^(\d{4})(\d{2})(\d{2})-/, '$3-$2-$1-')
+    const dateParts = base.match(/^(\d{2})-(\d{2})-(\d{4})-/)
+    const fallback = dateParts ? `${dateParts[3]}-${dateParts[2]}-${dateParts[1]}` : ''
+    const agreements = new Map(Object.keys(order.agreements ?? {}).map(vendorId => [vendorId, currentAgreement(order, vendorId)]))
+    return order.lines.flatMap(line => {
+      const agreement = agreements.get(line.vendorId)
+      if (!agreement) return []
+      const day = agreement.confirmedOn || fallback
+      return day ? [{line, order, day, estimated: !agreement.confirmedOn}] : []
+    })
+  })
+}
+function renderPurchases() {
+  purchaseRange ??= purchasePeriods().current
+  app.innerHTML = intro('Compras', 'Compras confirmadas por producto') +
+    `<div class="card purchase-filters">
+      <div class="actions"><button data-purchase-period="current">Este mes</button><button data-purchase-period="previous">Mes anterior</button></div>
+      <label>Desde<input type="date" id="purchase-from" value="${h(purchaseRange[0])}"></label>
+      <label>Hasta<input type="date" id="purchase-to" value="${h(purchaseRange[1])}"></label>
+    </div><div id="purchase-report" aria-live="polite"></div>`
+  updatePurchases()
+}
+function updatePurchases(restoreFocus = null) {
+  const report = $('#purchase-report')
+  const [from, to] = purchaseRange
+  const periods = purchasePeriods()
+  app.querySelectorAll('[data-purchase-period]').forEach(button => {
+    const [start, end] = periods[button.dataset.purchasePeriod]
+    button.setAttribute('aria-pressed', String(start === from && end === to))
+  })
+  if (!from || !to || from > to) {
+    report.innerHTML = '<p class="card danger" role="alert">Revisa que las dos fechas estén completas y en orden.</p>'
+    return
+  }
+  const rows = confirmedPurchases().filter(row => row.day >= from && row.day <= to)
+  if (!rows.length) {
+    report.innerHTML = '<p class="card empty">No hay compras confirmadas en este período.</p>'
+    return
+  }
+  const grouped = new Map()
+  const volume = new Map()
+  for (const entry of rows) {
+    const {line} = entry
+    const key = productKey(line)
+    if (!grouped.has(key)) grouped.set(key, {key,name:product(line),unit:line.unit,quantity:0,net:0,gross:0,orders:new Set(),entries:[]})
+    const group = grouped.get(key)
+    const amount = line.qty * line.size
+    group.quantity += amount
+    group.net += line.qty * line.net
+    group.gross += line.qty * line.gross
+    group.orders.add(entry.order.id)
+    group.entries.push(entry)
+    volume.set(line.unit, (volume.get(line.unit) || 0) + amount)
+  }
+  const products = [...grouped.values()].sort((a,b) => b.net - a.net || a.name.localeCompare(b.name, 'es'))
+  const {net,gross} = totals(rows.map(row => row.line))
+  const vendorCount = new Set(rows.map(row => row.line.vendorId)).size
+  const dateLabel = day => day.split('-').reverse().join('-')
+  const chosen = products.find(group => group.key === purchaseProduct)
+  report.innerHTML = `<section class="purchase-kpis" aria-label="Indicadores del período">
+    <article class="card purchase-total"><h2>Gasto con IVA</h2><strong>${clp(gross)}</strong><small>${clp(net)} netos</small></article>
+    <article class="card"><h2>Pedidos confirmados</h2><strong>${new Set(rows.map(row => row.order.id)).size}</strong><small>${vendorCount} ${vendorCount === 1 ? 'proveedor' : 'proveedores'}</small></article>
+    <article class="card"><h2>Productos comprados</h2><strong>${products.length}</strong><small>${[...volume].map(([unit, amount]) => `${fmt(amount)} ${h(unit)}`).join(' · ')}</small></article>
+    </section>
+    ${rows.some(row => row.estimated) ? '<p class="purchase-note">Las confirmaciones antiguas sin fecha registrada usan la fecha del pedido.</p>' : ''}
+    <div class="purchase-panels">
+      <section class="card"><h2>Acumulado por producto</h2><div class="purchase-table" role="region" aria-label="Acumulado por producto" tabindex="0"><table>
+      <thead><tr><th scope="col">Producto</th><th scope="col">Cantidad</th><th scope="col">Pedidos</th><th scope="col">Neto</th><th scope="col">Con IVA</th></tr></thead>
+      <tbody>${products.map(group => `<tr><td><button type="button" class="purchase-product" data-purchase-product="${h(group.key)}" aria-pressed="${group.key === purchaseProduct}">${h(group.name)}</button></td>
+      <td>${fmt(group.quantity)} ${h(group.unit)}</td><td>${group.orders.size}</td><td>${clp(group.net)}</td><td>${clp(group.gross)}</td></tr>`).join('')}</tbody></table></div></section>
+      <section class="card"><h2>Mayor gasto neto</h2><ol class="purchase-bars" aria-label="Hasta cinco productos por gasto neto">
+      ${products.slice(0, 5).map(group => `<li><div><span>${h(group.name)}</span><strong>${clp(group.net)}</strong></div>
+      <div class="purchase-track" aria-hidden="true"><span style="width:${100 * group.net / products[0].net}%"></span></div></li>`).join('')}</ol></section>
+    </div>
+    ${chosen ? `<section class="card"><h2>Detalle de ${h(chosen.name)}</h2><div class="purchase-table" role="region" aria-label="Detalle de compras" tabindex="0"><table>
+      <thead><tr><th scope="col">Proveedor y pedido</th><th scope="col">Fecha</th><th scope="col">Cantidad</th><th scope="col">Neto</th><th scope="col">Con IVA</th></tr></thead>
+      <tbody>${chosen.entries.map(({line, order, day, estimated}) => `<tr><td><strong>${h(vendor(line.vendorId)?.name || 'Proveedor')}</strong><br><small>N.º ${h(orderNumber(order))}</small></td>
+      <td>${h(dateLabel(day))}${estimated ? '<br><small>Fecha del pedido</small>' : ''}</td><td>${fmt(line.qty * line.size)} ${h(line.unit)}</td>
+      <td>${clp(line.qty * line.net)}</td><td>${clp(line.qty * line.gross)}</td></tr>`).join('')}</tbody></table></div></section>` : ''}`
+  if (restoreFocus) [...report.querySelectorAll('[data-purchase-product]')].find(button => button.dataset.purchaseProduct === restoreFocus)?.focus()
+}
 function renderGuide() {
   app.innerHTML = intro('Guía de uso', 'De la lista de precios al pedido.') + `<ol class="guide-grid">
     <li class="card"><span class="guide-number" aria-hidden="true">01</span><h2>Conecta tus equipos</h2><p>Entra con el mismo correo en el celular y el computador. En <strong>Cuenta</strong>, guarda el nombre de tu negocio y pulsa <strong>Sincronizar</strong> si quieres verificar que los cambios llegaron.</p><button data-view="account">Ir a Cuenta</button></li>
     <li class="card"><span class="guide-number" aria-hidden="true">02</span><h2>Agrega un proveedor</h2><p>Guarda su nombre, contacto y, si vas a enviarle pedidos desde la app, su WhatsApp o correo.</p><button data-view="vendors">Ir a Proveedores</button></li>
     <li class="card"><span class="guide-number" aria-hidden="true">03</span><h2>Carga sus precios</h2><p>Elige el proveedor y carga su lista en PDF, Excel o CSV. Si es una lista completa, deja marcada la opción de reemplazar las ofertas vigentes.</p><button data-view="import">Ir a Catálogos</button></li>
     <li class="card"><span class="guide-number" aria-hidden="true">04</span><h2>Compara y arma el pedido</h2><p>Busca un producto. Compara el precio por kilo o unidad y el total con IVA. Si dos proveedores usan nombres distintos para el mismo producto, asigna el mismo nombre en <strong>Equivalencia</strong>.</p><button data-view="buy">Ir a Comparar</button></li>
-    <li class="card"><span class="guide-number" aria-hidden="true">05</span><h2>Guarda y envía</h2><p>Ajusta las cantidades y guarda el pedido. Ábrelo desde <strong>Pedidos</strong> para preparar WhatsApp o correo. Después de enviarlo, vuelve y confirma el envío.</p><button data-view="drafts">Ir a Pedidos</button></li>
+    <li class="card"><span class="guide-number" aria-hidden="true">05</span><h2>Envía y confirma el acuerdo</h2><p>Envía el pedido por WhatsApp o correo y confirma el envío. Cuando el proveedor responda, abre <strong>Registrar respuesta del proveedor</strong>. Guarda el acuerdo, aunque los precios sigan iguales.</p><button data-view="drafts">Ir a Pedidos</button></li>
+    <li class="card"><span class="guide-number" aria-hidden="true">06</span><h2>Revisa tus compras</h2><p>En <strong>Compras</strong>, elige un rango por fecha de confirmación y toca un producto para ver el detalle. Si solo confirmó un proveedor, el total incluye su parte del pedido.</p><button data-view="purchases">Ir a Compras</button></li>
     </ol><section class="card guide-install"><h2>Instala la app</h2>
     <dl>
       <div><dt>iPhone o iPad</dt><dd>Abre la página en Safari. Pulsa <strong>Compartir → Agregar a pantalla de inicio</strong>. Si aparece <strong>Abrir como app web</strong>, déjalo activado y pulsa <strong>Agregar</strong>.</dd></div>
@@ -435,6 +528,7 @@ function render() {
   if (view === 'import') renderImport()
   if (view === 'account') renderAccount()
   if (view === 'guide') renderGuide()
+  if (view === 'purchases') renderPurchases()
 }
 
 function renderImport() {
@@ -529,6 +623,12 @@ document.addEventListener('input', e => {
 })
 app.addEventListener('change', e => {
   const el = e.target
+  if (el.id === 'purchase-from' || el.id === 'purchase-to') {
+    purchaseRange = [$('#purchase-from').value, $('#purchase-to').value]
+    purchaseProduct = null
+    updatePurchases()
+    return
+  }
   if (el.id === 'restore-workspace') {
     const file = el.files?.[0]
     if (file) void restoreWorkspace(file)
@@ -582,6 +682,19 @@ document.addEventListener('click', e => {
   const button = e.target.closest('button')
   if (!button) return
   const data = button.dataset
+  if (data.purchasePeriod) {
+    purchaseRange = purchasePeriods()[data.purchasePeriod]
+    purchaseProduct = null
+    $('#purchase-from').value = purchaseRange[0]
+    $('#purchase-to').value = purchaseRange[1]
+    updatePurchases()
+    return
+  }
+  if (data.purchaseProduct) {
+    purchaseProduct = purchaseProduct === data.purchaseProduct ? null : data.purchaseProduct
+    updatePurchases(data.purchaseProduct)
+    return
+  }
   if ('vendorResponse' in data) {
     const vendorId = button.closest('[data-order-vendor]').dataset.orderVendor
     const order = draft()
