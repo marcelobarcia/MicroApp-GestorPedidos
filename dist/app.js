@@ -141,7 +141,8 @@ function alternatePrice(row) {
   if (!tier) return ''
   if (row.displayVolume) return `<br><small class="price-down"><strong>VOL. aplicado en tu pedido</strong> · Base ${clp(row.baseGross / row.size)} / ${h(row.unit)} con IVA</small>`
   const rule = vendor(row.vendorId)?.volume
-  const condition = tier.minQty ? `Desde ${tier.minQty} unidades de compra`
+  const quantity = row.unit === 'kg' && row.size === 1 ? 'kg' : 'unidades de compra'
+  const condition = tier.minQty ? `Desde ${tier.minQty} ${quantity}`
     : rule?.minimum ? `VOL. · Pedido sobre ${clp(rule.minimum)}${rule.basis ? '' : ' · Base pendiente'}` : 'VOL. · Condición pendiente'
   return `<br><small class="price-down"><strong>${h(condition)}</strong> · ${clp(tier.gross / row.size)} / ${h(row.unit)} con IVA · ${clp(tier.gross)} por unidad de compra</small>`
 }

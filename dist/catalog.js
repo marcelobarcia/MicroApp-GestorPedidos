@@ -53,6 +53,33 @@ function veguitaTable(items) {
     })
   })
 }
+function veguitaRetailTable(items) {
+  const text = items.filter(item => item.str?.trim()).map(item => ({
+    value:item.str.trim(), x:item.transform[4], y:item.transform[5],
+    center:item.transform[4] + item.width / 2, height:item.height
+  }))
+  const headers = text.filter(item => /^(1 kg|x 1)$/.test(fold(item.value))).sort((a,b) => b.y - a.y)
+  return headers.flatMap((base, index) => {
+    const unit = fold(base.value) === '1 kg' ? 'kg' : 'unidad'
+    const alternate = text.find(item => /^x 5(?: kg)?$/.test(fold(item.value)) &&
+      Math.abs(item.y - base.y) <= 5 && item.x > base.x)
+    const nextHeader = headers[index + 1]?.y ?? -Infinity
+    const section = text.filter(item => item.y < base.y - 8 && item.y > nextHeader)
+    const prices = section.filter(item => /^\$\s*[\d.]+$/.test(item.value))
+    const names = section.filter(item => item.x < base.x - 45 && /\p{L}/u.test(item.value) &&
+      item.height > base.height && item.height < base.height * 1.65).sort((a,b) => b.y - a.y)
+    const priceAt = (name, column) => {
+      if (!column) return 0
+      const cell = prices.filter(item => Math.abs(item.center - column.center) < 38 && Math.abs(item.y - name.y) <= 10)
+        .sort((a,b) => Math.abs(a.y - name.y) - Math.abs(b.y - name.y))[0]
+      return number(cell?.value, true)
+    }
+    return names.map(name => {
+      const gross = priceAt(name, base)
+      return tieredOffer(offer(name.value, 1, 0, gross, unit, Boolean(gross) && !unavailable.test(name.value)), priceAt(name, alternate), 5)
+    })
+  })
+}
 function parseLines(lines, format) {
   const rows = []
   for (const original of lines) {
@@ -272,6 +299,11 @@ async function readCatalog(file, notify, supplierName = '') {
       }
       const combinedText = pages.flatMap(page => page.text).join(' ')
       if (hint === 'veguita' || detectCatalog(combinedText) === 'veguita') {
+        if (pages[0]?.items.some(item => fold(item.str) === 'minorista')) {
+          const retail = pages.flatMap(({items}) => veguitaRetailTable(items))
+          if (retail.length) return retail
+          throw new Error('No se reconocieron las columnas de precios del catálogo minorista de La Veguita.')
+        }
         const offers = pages.flatMap(({items}) => veguitaTable(items))
         if (offers.length) {
           offers.volumeMinimum = number(combinedText.match(/\bsobre\s*\$\s*([\d.]+)/i)?.[1]?.replace(/\.$/, ''), true)
