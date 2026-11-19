@@ -131,7 +131,7 @@ function cartLinePrice(line, agreement) {
   const sent = agreement?.original?.find(row => row.id === line.id)
   const adjusted = sent && (sent.net !== line.net || sent.gross !== line.gross)
   const rate = line.appliedRate === 'volume' ? 'VOL.' : line.appliedRate === 'quantity' ? 'Descuento por cantidad' : ''
-  return `<small>${fmt(line.size)} ${h(line.unit)} por unidad de compra · ${clp(line.net)} neto<br>${clp(line.net / line.size)} / ${h(line.unit)} neto</small>
+  return `<small>${fmt(line.size)} ${h(line.unit)} por unidad de compra · ${clp(line.net)} neto · ${clp(line.gross)} con IVA<br>${clp(line.net / line.size)} / ${h(line.unit)} neto</small>
     <br><small><strong>Subtotal con IVA</strong> · ${clp(line.gross * line.qty)}</small>
     ${rate ? `<br><small class="price-down"><strong>${rate}</strong></small>` : ''}
     ${adjusted ? `<br><small class="agreed-price">Enviado ${clp(sent.net)} neto · Acordado ${clp(line.net)} neto</small>` : ''}`
