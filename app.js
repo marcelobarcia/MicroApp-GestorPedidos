@@ -134,7 +134,7 @@ function cartLinePrice(line, agreement) {
   return `<small>${fmt(line.size)} ${h(line.unit)} por unidad de compra · ${clp(line.net)} neto · ${clp(line.gross)} con IVA<br>${clp(line.net / line.size)} / ${h(line.unit)} neto</small>
     <br><small><strong>Subtotal con IVA</strong> · ${clp(line.gross * line.qty)}</small>
     ${rate ? `<br><small class="price-down"><strong>${rate}</strong></small>` : ''}
-    ${adjusted ? `<br><small class="agreed-price">Enviado ${clp(sent.net)} neto · Acordado ${clp(line.net)} neto</small>` : ''}`
+    ${adjusted ? `<br><small class="agreed-price"><strong>Enviado</strong> ${clp(sent.net)} neto · ${clp(sent.gross)} con IVA<br><strong>Acordado</strong> ${clp(line.net)} neto · ${clp(line.gross)} con IVA</small>` : ''}`
 }
 function alternatePrice(row) {
   const tier = row.tier
@@ -316,7 +316,7 @@ function responseForm(lines, vendorName) {
     <h4>Precios acordados con ${h(vendorName || 'el proveedor')}</h4>
     <p>Cuando el proveedor confirme el pedido, ingresa los precios que cambiaron y elige si son netos o con IVA. Al guardar el acuerdo, se actualizarán el pedido y los precios vigentes de este proveedor para futuras compras.</p>
     ${lines.map(line => `<fieldset class="response-line"><legend>${h(line.name)} · ${fmt(line.size)} ${h(line.unit)}</legend>
-      <small>Precio actual del pedido ${clp(line.net)} neto por unidad de compra</small>
+      <small>Precio actual por unidad de compra · ${clp(line.net)} neto · ${clp(line.gross)} con IVA</small>
       <div class="fields"><label>Nuevo precio en CLP<input name="price-${h(line.id)}" type="number" min="0.01" max="999999999" step="0.01" inputmode="decimal" placeholder="${h(line.net)}"></label>
       <label>Precio indicado por el proveedor<select name="basis-${h(line.id)}">
         <option value="net">Neto por unidad de compra</option><option value="gross">Con IVA por unidad de compra</option>

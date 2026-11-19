@@ -1,6 +1,6 @@
-const version = 'gestor-pedidos-offline-v13'
+const version = 'gestor-pedidos-offline-v14'
 const assets = [
-  './', './index.html', './style.css?v=10', './app.js?v=13', './catalog.js?v=10', './cloud.js?v=2', './cloud-config.js',
+  './', './index.html', './style.css?v=10', './app.js?v=14', './catalog.js?v=10', './cloud.js?v=2', './cloud-config.js',
   './plantilla.xlsx', './manifest.webmanifest', './icons/icon-192.png', './icons/icon-512.png',
   './icons/maskable-512.png', './icons/apple-touch-icon.png'
 ]
