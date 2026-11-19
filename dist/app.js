@@ -146,41 +146,55 @@ function alternatePrice(row) {
   return `<br><small class="price-down"><strong>${h(condition)}</strong> · ${clp(tier.gross / row.size)} / ${h(row.unit)} con IVA · ${clp(tier.gross)} por unidad de compra</small>`
 }
 
-function renderResults(refreshFilters = true) {
+function* matchOffers(terms) {
+  const groups = new Map()
+  const vendors = new Map(state.vendors.map(v => [v.id, v.name]))
+  let processed = 0
+  for (const catalog of state.catalogs) for (const offerRow of catalog.rows) {
+    const row = {...offerRow, vendorId: catalog.vendorId, date: catalog.date}
+    const name = product(row)
+    const groupKey = productKey(row)
+    if (!groups.has(groupKey)) groups.set(groupKey, {name, rows: [], matches: false})
+    const group = groups.get(groupKey)
+    group.rows.push(row)
+    if (!group.matches) {
+      const haystack = fold([name, row.name, row.code, row.origin, vendors.get(row.vendorId)].join(' '))
+      group.matches = terms.every(part => haystack.includes(part))
+    }
+    if (++processed % 100 === 0) yield
+  }
+  return [...groups.values()].filter(group => group.matches).sort((a,b) => a.name.localeCompare(b.name, 'es'))
+}
+
+function renderResults(refreshFilters = true, matches) {
   const target = $('#results')
   if (!target) return
   const filterTarget = $('#vendor-filters')
   const terms = fold(query).split(' ').filter(Boolean)
   if (!terms.length && state.catalogs.length) {
     if (filterTarget) filterTarget.innerHTML = ''
-    target.innerHTML = '<div class="card empty">Escribe un producto para ver sus precios y presentaciones.</div>'
+    target.innerHTML = '<div class="card empty">Escribe un producto y pulsa la lupa para comparar precios.</div>'
     return
   }
-  const groups = new Map()
-  const order = draft()
-  for (const offerRow of allOffers()) {
-    const displayVolume = offerRow.tier && !offerRow.tier.minQty && !order.saved &&
-      order.volumeQuotes?.[offerRow.vendorId]?.eligible && !sentToVendor(order, offerRow.vendorId) && !currentAgreement(order, offerRow.vendorId)
-    const row = displayVolume
-      ? {...offerRow, baseGross:offerRow.gross, ...offerRow.tier, previousNet:offerRow.tier.previousNet, displayVolume:true}
-      : offerRow
-    const name = product(row)
-    const haystack = fold([name, row.name, row.code, row.origin, vendor(row.vendorId)?.name].join(' '))
-    const groupKey = productKey(row)
-    if (!groups.has(groupKey)) groups.set(groupKey, {name, rows: [], matches: false})
-    const group = groups.get(groupKey)
-    group.rows.push(row)
-    group.matches ||= terms.every(part => haystack.includes(part))
+  if (!matches) {
+    const search = matchOffers(terms)
+    let batch = search.next()
+    while (!batch.done) batch = search.next()
+    matches = batch.value
   }
-  const matches = [...groups.values()].filter(group => group.matches).sort((a,b) => a.name.localeCompare(b.name, 'es'))
   const matchingIds = new Set(matches.flatMap(group => group.rows.map(row => row.vendorId)))
   const matchingVendors = state.vendors.filter(v => matchingIds.has(v.id)).sort((a,b) => a.name.localeCompare(b.name, 'es'))
   const filters = matchingVendors.length ? `<fieldset class="card vendor-filters"><legend>Filtrar por proveedor</legend><div class="actions">
     ${matchingVendors.map(v => `<label class="check"><input type="checkbox" data-filter-vendor="${h(v.id)}" ${excludedVendors.has(v.id) ? '' : 'checked'}> ${h(v.name)}</label>`).join('')}
     </div></fieldset>` : ''
   const visible = matches.map(group => ({...group, rows: group.rows.filter(row => !excludedVendors.has(row.vendorId))})).filter(group => group.rows.length)
+  const order = draft()
+  const eligible = new Set(Object.keys(order.volumeQuotes ?? {}).filter(id => !order.saved && order.volumeQuotes[id]?.eligible &&
+    !sentToVendor(order, id) && !currentAgreement(order, id)))
   if (filterTarget && refreshFilters) filterTarget.innerHTML = filters
   target.innerHTML = visible.length ? visible.map(({name, rows}) => {
+    rows = rows.map(row => row.tier && !row.tier.minQty && eligible.has(row.vendorId)
+      ? {...row, baseGross:row.gross, ...row.tier, previousNet:row.tier.previousNet, displayVolume:true} : row)
     const valid = canOrder
     rows.sort((a,b) => Number(valid(b)) - Number(valid(a)) || a.net / a.size - b.net / b.size)
     const best = valid(rows[0]) ? rows[0] : null
@@ -245,6 +259,49 @@ function renderResults(refreshFilters = true) {
     : state.catalogs.length
     ? `<div class="card"><p>No encontramos productos para «${h(query)}» en tus catálogos activos.</p><button data-view="import">Ver catálogos</button></div>`
     : '<div class="card"><p>Aún no tienes un catálogo activo. Puedes cargar uno o probar con la almendra de Terra Verde.</p><div class="actions"><button class="primary" data-view="import">Cargar catálogo</button><button id="sample">Probar con almendra</button></div></div>'
+  return visible.length
+}
+async function searchCatalogs(form) {
+  const button = $('button[type="submit"]', form)
+  if (button.getAttribute('aria-disabled') === 'true') return
+  const nextQuery = $('#search', form).value.trim()
+  const terms = fold(nextQuery).split(' ').filter(Boolean)
+  const target = $('#results')
+  const loading = $('#search-loading')
+  const announcement = $('#search-announcement')
+  announcement.textContent = ''
+  button.setAttribute('aria-disabled', 'true')
+  target.setAttribute('aria-busy', 'true')
+  const indicator = setTimeout(() => { loading.hidden = false }, 200)
+  try {
+    let matches
+    if (terms.length) {
+      const search = matchOffers(terms)
+      let deadline = performance.now() + 12
+      let batch = search.next()
+      while (!batch.done) {
+        if (performance.now() >= deadline) {
+          await new Promise(resolve => setTimeout(resolve, 0))
+          if (!form.isConnected) return
+          deadline = performance.now() + 12
+        }
+        batch = search.next()
+      }
+      matches = batch.value
+    }
+    if (fold(nextQuery) !== fold(query)) excludedVendors.clear()
+    query = nextQuery
+    editingAlias = null
+    const count = renderResults(true, matches)
+    if (terms.length) announcement.textContent = count ? `${count} ${count === 1 ? 'producto encontrado' : 'productos encontrados'}` : 'No hay resultados para mostrar.'
+  } catch {
+    notify('No pudimos completar la búsqueda. Intenta de nuevo.', true)
+  } finally {
+    clearTimeout(indicator)
+    loading.hidden = true
+    target.setAttribute('aria-busy', 'false')
+    button.removeAttribute('aria-disabled')
+  }
 }
 function orderMessage(v, lines, withSymbols = false) {
   const {net,gross} = totals(lines)
@@ -568,7 +625,7 @@ function renderGuide() {
     <li class="card"><span class="guide-number" aria-hidden="true">01</span><h2>Conecta tus equipos</h2><p>Entra con el mismo correo en el celular y el computador. En <strong>Cuenta</strong>, guarda el nombre de tu negocio y pulsa <strong>Sincronizar</strong> si quieres verificar que los cambios llegaron.</p><button data-view="account">Ir a Cuenta</button></li>
     <li class="card"><span class="guide-number" aria-hidden="true">02</span><h2>Agrega un proveedor</h2><p>Guarda su nombre, contacto y, si vas a enviarle pedidos desde la app, su WhatsApp o correo.</p><button data-view="vendors">Ir a Proveedores</button></li>
     <li class="card"><span class="guide-number" aria-hidden="true">03</span><h2>Carga sus precios</h2><p>Elige el proveedor y carga su lista en PDF, Excel o CSV. Si tiene tarifa por monto, configura su base de cálculo en <strong>Proveedores</strong>. El pedido aplica la tarifa cuando califica.</p><button data-view="import">Ir a Catálogos</button></li>
-    <li class="card"><span class="guide-number" aria-hidden="true">04</span><h2>Compara y arma el pedido</h2><p>Busca un producto. Compara el precio por kilo o unidad y el total con IVA. Si dos proveedores usan nombres distintos para el mismo producto, asigna el mismo nombre en <strong>Equivalencia</strong>.</p><button data-view="buy">Ir a Comparar</button></li>
+    <li class="card"><span class="guide-number" aria-hidden="true">04</span><h2>Compara y arma el pedido</h2><p>Escribe un producto y pulsa la lupa o Enter. Compara el precio por kilo o unidad y el total con IVA. Si dos proveedores usan nombres distintos para el mismo producto, asigna el mismo nombre en <strong>Equivalencia</strong>.</p><button data-view="buy">Ir a Comparar</button></li>
     <li class="card"><span class="guide-number" aria-hidden="true">05</span><h2>Envía y confirma el acuerdo</h2><p>Abre WhatsApp o correo para enviar el pedido. Cuando el proveedor responda, abre <strong>Editar precios acordados</strong> en su sección. Guarda el acuerdo, aunque los precios sigan iguales.</p><button data-view="drafts">Ir a Pedidos</button></li>
     <li class="card"><span class="guide-number" aria-hidden="true">06</span><h2>Revisa tus compras</h2><p>En <strong>Compras</strong>, elige un rango por fecha de confirmación y toca un producto para ver el detalle. Si solo confirmó un proveedor, el total incluye su parte del pedido.</p><button data-view="purchases">Ir a Compras</button></li>
     </ol><section class="card guide-install"><h2>Instala la app</h2>
@@ -596,10 +653,11 @@ function render() {
       <div><h1>Compara <span>precios</span></h1><p>Encuentra la mejor oferta por kilo o unidad de medida.</p></div>
       <div class="hero-stat"><strong>${activeSuppliers.size}</strong><span>${activeSuppliers.size === 1 ? 'proveedor con precios' : 'proveedores con precios'}</span></div>
     </section>
-    <div class="grid"><section><div class="card search-card">
-      <label for="search">Buscar producto</label><div class="search-box"><span aria-hidden="true"></span><input id="search" type="search" placeholder="Ej. almendra, avena, cacao…" value="${h(query)}"></div>
+    <div class="grid"><section><form id="product-search" class="card search-card" role="search">
+      <label for="search">Buscar producto</label><div class="search-box"><input id="search" type="search" enterkeyhint="search" placeholder="Ej. almendra, avena, cacao…" value="${h(query)}"><button class="primary search-button" type="submit" aria-label="Buscar"><span class="search-icon" aria-hidden="true"></span></button></div>
       <a id="order-shortcut" class="button order-shortcut" href="#cart">Ver pedido</a>
-    </div><div id="vendor-filters"></div><div id="results"></div></section><aside id="cart" class="card cart" aria-label="Mi pedido"></aside></div>`
+    </form><div role="status"><div id="search-loading" class="search-loading" hidden><div class="search-motion" aria-hidden="true"><span class="search-icon"></span></div><div><strong>Buscando en tus catálogos…</strong><div class="search-track" aria-hidden="true"></div></div></div><span id="search-announcement" class="search-announcement"></span></div>
+    <div id="vendor-filters"></div><div id="results"></div></section><aside id="cart" class="card cart" aria-label="Mi pedido"></aside></div>`
     renderResults()
     renderCart()
   }
@@ -712,7 +770,6 @@ function activate(entry, imported = false) {
 }
 document.addEventListener('input', e => {
   const el = e.target
-  if (el.id === 'search') { query = el.value; editingAlias = null; excludedVendors.clear(); renderResults() }
   if (el.dataset.filterVendor) {
     if (el.checked) excludedVendors.delete(el.dataset.filterVendor)
     else excludedVendors.add(el.dataset.filterVendor)
@@ -994,6 +1051,10 @@ document.addEventListener('click', e => {
 app.addEventListener('submit', async e => {
   e.preventDefault()
   const form = e.target
+  if (form.id === 'product-search') {
+    await searchCatalogs(form)
+    return
+  }
   const data = new FormData(form)
   if (form.id === 'vendor-response' && responseEditor) {
     acknowledgePrices(responseEditor, data)
