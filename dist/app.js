@@ -303,17 +303,18 @@ function orderStatus(order) {
 }
 function deliveryHtml(order, vendorId) {
   const agreement = currentAgreement(order, vendorId)
+  const deliveries = deliveryState(order, vendorId)
   const status = agreement ? `<span class="tag">${agreement.changed ? 'Confirmado con cambios' : 'Confirmado'}</span>` : ''
-  const response = agreement || sentToVendor(order, vendorId)
-    ? `<button data-vendor-response>Registrar respuesta del proveedor</button>` : ''
-  return deliveryState(order, vendorId).map(([channel, record]) => record.sent
+  const response = agreement || deliveries.length
+    ? `<button data-vendor-response>Editar precios acordados</button>` : ''
+  return deliveries.map(([channel, record]) => record.sent
     ? `<span class="tag">Enviado por ${channels[channel]}</span>`
     : `<button data-confirm-send="${channel}">Confirmar envío por ${channels[channel]}</button>`).join('') + status + response
 }
-function responseForm(lines) {
+function responseForm(lines, vendorName) {
   return `<form class="stack line-editor" id="vendor-response">
-    <h4>Respuesta del proveedor</h4>
-    <p>Completa solo los precios que cambiaron. Al confirmar, se actualizará el pedido y el precio vigente para futuras compras.</p>
+    <h4>Precios acordados con ${h(vendorName || 'el proveedor')}</h4>
+    <p>Cuando el proveedor confirme el pedido, ingresa los precios que cambiaron y elige si son netos o con IVA. Al guardar el acuerdo, se actualizarán el pedido y los precios vigentes de este proveedor para futuras compras.</p>
     ${lines.map(line => `<fieldset class="response-line"><legend>${h(line.name)} · ${fmt(line.size)} ${h(line.unit)}</legend>
       <small>Precio actual del pedido ${clp(line.net)} neto por unidad de compra</small>
       <div class="fields"><label>Nuevo precio en CLP<input name="price-${h(line.id)}" type="number" min="0.01" max="999999999" step="0.01" inputmode="decimal" placeholder="${h(line.net)}"></label>
@@ -321,7 +322,7 @@ function responseForm(lines) {
         <option value="net">Neto por unidad de compra</option><option value="gross">Con IVA por unidad de compra</option>
         ${line.size !== 1 ? `<option value="netMeasure">Neto por ${h(line.unit)}</option><option value="grossMeasure">Con IVA por ${h(line.unit)}</option>` : ''}
       </select></label></div></fieldset>`).join('')}
-    <div class="actions"><button class="primary">Confirmar precio acordado</button><button type="button" id="cancel-response">Cancelar</button></div>
+    <div class="actions"><button class="primary">Guardar acuerdo</button><button type="button" id="cancel-response">Cancelar</button></div>
   </form>`
 }
 function acknowledgePrices(editor, data) {
@@ -329,7 +330,7 @@ function acknowledgePrices(editor, data) {
   const vendorId = editor.vendorId
   const lines = orderLines(order, vendorId)
   if (order.id !== editor.orderId || orderVersion(lines) !== editor.version ||
-      !(currentAgreement(order, vendorId) || sentToVendor(order, vendorId))) {
+      !(currentAgreement(order, vendorId) || deliveryState(order, vendorId).length)) {
     notify('El pedido cambió. Vuelve a abrir la respuesta del proveedor.')
     return
   }
@@ -448,7 +449,7 @@ function renderCart() {
       ${url ? `<a class="button primary" data-whatsapp href="${h(url)}" target="_blank" rel="noopener noreferrer">Abrir en WhatsApp ↗</a>` : '<button data-view="vendors">Configurar WhatsApp</button>'}
       ${mail ? `<a class="button" data-order-email href="${h(mail)}">Preparar correo</a>` : '<button data-view="vendors">Configurar correo</button>'}
       </div><div class="actions delivery" data-delivery>${deliveryHtml(d, vendorId)}</div>
-      ${responseEditor?.orderId === d.id && responseEditor.vendorId === vendorId ? responseForm(lines) : ''}</section>`
+      ${responseEditor?.orderId === d.id && responseEditor.vendorId === vendorId ? responseForm(lines, v?.name) : ''}</section>`
   }).join('') + `<section class="cart-total"><h3>Total del pedido</h3><div id="order-total">${totalsHtml(total)}</div></section>` : '<p class="empty">Agrega una presentación para empezar.</p>'}
   ${d.lines.length ? '<div class="actions"><button class="primary" id="save-order">Guardar pedido</button><button data-view="drafts">Ver guardados</button></div>' : ''}
   <small>Los pedidos se guardan en este navegador.</small>`
@@ -568,7 +569,7 @@ function renderGuide() {
     <li class="card"><span class="guide-number" aria-hidden="true">02</span><h2>Agrega un proveedor</h2><p>Guarda su nombre, contacto y, si vas a enviarle pedidos desde la app, su WhatsApp o correo.</p><button data-view="vendors">Ir a Proveedores</button></li>
     <li class="card"><span class="guide-number" aria-hidden="true">03</span><h2>Carga sus precios</h2><p>Elige el proveedor y carga su lista en PDF, Excel o CSV. Si tiene tarifa por monto, configura su base de cálculo en <strong>Proveedores</strong>. El pedido aplica la tarifa cuando califica.</p><button data-view="import">Ir a Catálogos</button></li>
     <li class="card"><span class="guide-number" aria-hidden="true">04</span><h2>Compara y arma el pedido</h2><p>Busca un producto. Compara el precio por kilo o unidad y el total con IVA. Si dos proveedores usan nombres distintos para el mismo producto, asigna el mismo nombre en <strong>Equivalencia</strong>.</p><button data-view="buy">Ir a Comparar</button></li>
-    <li class="card"><span class="guide-number" aria-hidden="true">05</span><h2>Envía y confirma el acuerdo</h2><p>Envía el pedido por WhatsApp o correo y confirma el envío. Cuando el proveedor responda, abre <strong>Registrar respuesta del proveedor</strong>. Guarda el acuerdo, aunque los precios sigan iguales.</p><button data-view="drafts">Ir a Pedidos</button></li>
+    <li class="card"><span class="guide-number" aria-hidden="true">05</span><h2>Envía y confirma el acuerdo</h2><p>Abre WhatsApp o correo para enviar el pedido. Cuando el proveedor responda, abre <strong>Editar precios acordados</strong> en su sección. Guarda el acuerdo, aunque los precios sigan iguales.</p><button data-view="drafts">Ir a Pedidos</button></li>
     <li class="card"><span class="guide-number" aria-hidden="true">06</span><h2>Revisa tus compras</h2><p>En <strong>Compras</strong>, elige un rango por fecha de confirmación y toca un producto para ver el detalle. Si solo confirmó un proveedor, el total incluye su parte del pedido.</p><button data-view="purchases">Ir a Compras</button></li>
     </ol><section class="card guide-install"><h2>Instala la app</h2>
     <dl>
