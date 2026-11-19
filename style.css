@@ -180,6 +180,10 @@ button[hidden]{display:none}
 .guide-install dd{margin:.25rem 0 0;color:var(--muted)}
 .vendor-form{display:grid;grid-template-columns:1.1fr 1fr 1fr 1.35fr auto;gap:.45rem .65rem}
 .vendor-form label{overflow-wrap:anywhere}
+.vendor-volume{grid-column:1/-1;padding-top:.4rem;border-top:1px solid var(--line)}
+.vendor-volume summary{font-weight:700}
+.vendor-volume .fields{margin-top:.5rem}
+.tier-note{margin:.55rem 0;color:var(--green);font-size:.9rem}
 .review{overflow:auto;max-height:62vh;border:1px solid var(--line);border-radius:7px}
 table{width:100%;border-collapse:collapse;text-align:left;font-size:.86rem}
 th,td{padding:.3rem;border-bottom:1px solid var(--line)}

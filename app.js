@@ -77,6 +77,73 @@ const alternatives = line => [line, ...allOffers().filter(row => row.id !== line
   .sort((a, b) => a.net / a.size - b.net / b.size)]
 const totals = lines => lines.reduce((sum, line) => ({net: sum.net + line.net * line.qty, gross: sum.gross + line.gross * line.qty}), {net: 0, gross: 0})
 const totalsHtml = ({net,gross}) => `<div class="totals"><span>Neto</span><span>${clp(net)}</span><span>IVA</span><span>${clp(gross - net)}</span><strong>Total con IVA</strong><strong>${clp(gross)}</strong></div>`
+const volumeBases = [
+  ['', 'Pendiente de confirmar'],
+  ['baseGross', 'Con IVA, antes del descuento VOL.'],
+  ['volumeGross', 'Con IVA, después del descuento VOL.'],
+  ['baseNet', 'Neto, antes del descuento VOL.'],
+  ['volumeNet', 'Neto, después del descuento VOL.']
+]
+function quoteVendor(lines, rule) {
+  const base = lines.map(line => {
+    if (!line.tier) return line
+    const net = line.baseNet ?? line.net
+    const gross = line.baseGross ?? line.gross
+    const quantityTier = line.tier.minQty && line.qty >= line.tier.minQty
+    return {...line, baseNet:net, baseGross:gross, net:quantityTier ? line.tier.net : net,
+      gross:quantityTier ? line.tier.gross : gross, appliedRate:quantityTier ? 'quantity' : 'base'}
+  })
+  if (!base.some(line => line.tier && !line.tier.minQty)) return {lines:base}
+  const candidate = base.map(line => line.tier && !line.tier.minQty
+    ? {...line, net:line.tier.net, gross:line.tier.gross, appliedRate:'volume'} : line)
+  const {minimum, basis} = rule ?? {}
+  if (!minimum || !basis) return {lines:base, volume:{minimum, configured:false}}
+  const before = totals(base)
+  const after = totals(candidate)
+  const qualifying = basis.startsWith('volume') ? after : before
+  const amount = basis.endsWith('Net') ? qualifying.net : qualifying.gross
+  const eligible = amount > minimum
+  return {lines:eligible ? candidate : base, volume:{minimum, configured:true, eligible,
+    remaining: Math.max(0, minimum + 1 - amount), net:basis.endsWith('Net'),
+    afterDiscount:basis.startsWith('volume')}}
+}
+function repriceVendor(order, vendorId) {
+  const original = orderLines(order, vendorId)
+  if (!original.some(line => line.tier) && !order.volumeQuotes?.[vendorId]) return
+  const quote = quoteVendor(original, vendor(vendorId)?.volume)
+  const prices = new Map(quote.lines.map(line => [line.id,line]))
+  order.lines = order.lines.map(line => line.vendorId === vendorId ? prices.get(line.id) : line)
+  order.volumeQuotes ??= {}
+  if (quote.volume) order.volumeQuotes[vendorId] = quote.volume
+  else delete order.volumeQuotes[vendorId]
+}
+function volumeNote(order, vendorId) {
+  const volume = order.volumeQuotes?.[vendorId]
+  if (!volume) return ''
+  if (!volume.configured) return '<p class="tier-note">VOL. pendiente de configurar en Proveedores.</p>'
+  if (volume.eligible) {
+    const savings = orderLines(order, vendorId).reduce((sum, line) => sum + (line.appliedRate === 'volume' ? (line.baseGross - line.gross) * line.qty : 0), 0)
+    return `<p class="tier-note"><strong>VOL. aplicado</strong>${savings > 0 ? ` · Ahorras ${clp(savings)} con IVA.` : ''}</p>`
+  }
+  return `<p class="tier-note">Faltan ${clp(volume.remaining)} ${volume.net ? 'netos' : 'con IVA'} para VOL.${volume.afterDiscount ? ' El mínimo se mide con el descuento aplicado.' : ''}</p>`
+}
+function cartLinePrice(line, agreement) {
+  const sent = agreement?.original?.find(row => row.id === line.id)
+  const adjusted = sent && (sent.net !== line.net || sent.gross !== line.gross)
+  const rate = line.appliedRate === 'volume' ? 'VOL.' : line.appliedRate === 'quantity' ? 'Descuento por cantidad' : ''
+  return `<small>${fmt(line.size)} ${h(line.unit)} por unidad de compra · ${clp(line.net)} neto<br>${clp(line.net / line.size)} / ${h(line.unit)} neto</small>
+    ${rate ? `<br><small class="price-down"><strong>${rate}</strong></small>` : ''}
+    ${adjusted ? `<br><small class="agreed-price">Enviado ${clp(sent.net)} neto · Acordado ${clp(line.net)} neto</small>` : ''}`
+}
+function alternatePrice(row) {
+  const tier = row.tier
+  if (!tier) return ''
+  if (row.displayVolume) return `<br><small class="price-down"><strong>VOL. aplicado en tu pedido</strong> · Base ${clp(row.baseGross / row.size)} / ${h(row.unit)} con IVA</small>`
+  const rule = vendor(row.vendorId)?.volume
+  const condition = tier.minQty ? `Desde ${tier.minQty} unidades de compra`
+    : rule?.minimum ? `VOL. · Pedido sobre ${clp(rule.minimum)}${rule.basis ? '' : ' · Base pendiente'}` : 'VOL. · Condición pendiente'
+  return `<br><small class="price-down"><strong>${h(condition)}</strong> · ${clp(tier.gross / row.size)} / ${h(row.unit)} con IVA · ${clp(tier.gross)} por unidad de compra</small>`
+}
 
 function renderResults(refreshFilters = true) {
   const target = $('#results')
@@ -89,7 +156,13 @@ function renderResults(refreshFilters = true) {
     return
   }
   const groups = new Map()
-  for (const row of allOffers()) {
+  const order = draft()
+  for (const offerRow of allOffers()) {
+    const displayVolume = offerRow.tier && !offerRow.tier.minQty && !order.saved &&
+      order.volumeQuotes?.[offerRow.vendorId]?.eligible && !sentToVendor(order, offerRow.vendorId) && !currentAgreement(order, offerRow.vendorId)
+    const row = displayVolume
+      ? {...offerRow, baseGross:offerRow.gross, ...offerRow.tier, previousNet:offerRow.tier.previousNet, displayVolume:true}
+      : offerRow
     const name = product(row)
     const haystack = fold([name, row.name, row.code, row.origin, vendor(row.vendorId)?.name].join(' '))
     const groupKey = productKey(row)
@@ -157,7 +230,7 @@ function renderResults(refreshFilters = true) {
       <button type="button" class="offer-alias" data-alias="${h(r.id)}" aria-expanded="${editingAlias === r.id}">Equivalencia</button></div>
       <div class="offer-price">${valid(r) ? `<strong>${clp(r.net / r.size)} / ${r.unit} neto</strong><br>
       <small>${clp(r.gross / r.size)} / ${r.unit} con IVA</small><br>
-      <small>Por unidad de compra · ${clp(r.net)} neto · ${clp(r.gross)} con IVA</small>${sameSizeDifference(r)}${sizeSavings(r)}${priceChange(r)}` : '<small>Sin precio o disponibilidad</small>'}</div>
+      <small>Por unidad de compra · ${clp(r.net)} neto · ${clp(r.gross)} con IVA</small>${alternatePrice(r)}${sameSizeDifference(r)}${sizeSavings(r)}${priceChange(r)}` : '<small>Sin precio o disponibilidad</small>'}</div>
       ${valid(r) ? `<button class="primary" data-add="${h(r.id)}">Agregar</button>` : ''}
       ${editingAlias === r.id ? `<form class="stack line-editor" data-alias-form="${h(r.id)}">
         <label>Nombre común<input id="alias-name" name="alias" maxlength="160" required value="${h(product(r))}"></label>
@@ -183,7 +256,8 @@ function orderMessage(v, lines, withSymbols = false) {
     `${bold('Proveedor:')} ${v.name}`, '',
     lines.map((l, index) => {
       const quantity = `${l.qty} ${l.qty === 1 ? 'unidad' : 'unidades'} de ${fmt(l.size)} ${l.unit}`
-      return `${index + 1}. ${bold(l.name)}${l.code ? ' (' + l.code + ')' : ''}\n${italic(quantity)} | ${clp(l.net)} neto por unidad\nSubtotal neto: ${clp(l.net * l.qty)}`
+      const rate = l.appliedRate === 'volume' ? ' · VOL.' : l.appliedRate === 'quantity' ? ' · Descuento por cantidad' : ''
+      return `${index + 1}. ${bold(l.name)}${l.code ? ' (' + l.code + ')' : ''}\n${italic(quantity)} | ${clp(l.net)} neto por unidad${rate}\nSubtotal neto: ${clp(l.net * l.qty)}`
     }).join('\n\n'),
     '', withSymbols ? '\u2696\uFE0F Totales en CLP' : bold('Totales en CLP'), `Neto: ${clp(net)}`, `IVA: ${clp(gross-net)}`, bold(`Total con IVA: ${clp(gross)}`),
     '', 'Por favor, confirmen disponibilidad, precios y fecha estimada de entrega. ¡Gracias!'
@@ -292,16 +366,29 @@ function acknowledgePrices(editor, data) {
     if (matches.length > 1) { notify(`Hay más de una oferta vigente para ${line.name}. Revisa el catálogo del proveedor.`, true); return }
     const match = matches[0]
     const current = match || line
-    const updated = {...current, ...price, id: id(), available: true, previousNet: price.net === current.net ? current.previousNet : current.net}
+    const discounted = line.appliedRate === 'volume' || line.appliedRate === 'quantity'
+    const tier = current.tier || line.tier
+    const agreed = discounted && tier
+      ? {net:current.baseNet ?? current.net, gross:current.baseGross ?? current.gross, tier:{...tier,...price,
+        previousNet: price.net === tier.net ? tier.previousNet : tier.net}}
+      : {...price, previousNet:price.net === current.net ? current.previousNet : current.net}
+    const updated = {...current, ...agreed, id: id(), available: true}
     if (match) {
-      if (price.net !== current.net || price.gross !== current.gross || !current.available) updates.set(current.id, updated)
+      updates.set(current.id, updated)
     } else {
-      const {qty, vendorId, date, ...offerRow} = updated
+      const {qty, vendorId, date, appliedRate, baseNet, baseGross, ...offerRow} = updated
       additions.push(offerRow)
     }
     for (const purchase of lines.filter(row => samePresentation(row, line))) prices.set(purchase.id, price)
   }
-  const nextLines = order.lines.map(line => prices.has(line.id) && line.vendorId === vendorId ? {...line, ...prices.get(line.id)} : line)
+  const nextLines = order.lines.map(line => {
+    if (line.vendorId !== vendorId || !prices.has(line.id)) return line
+    const price = prices.get(line.id)
+    if (!line.tier) return {...line,...price}
+    return line.appliedRate === 'base'
+      ? {...line,...price,baseNet:price.net,baseGross:price.gross}
+      : {...line,...price,tier:{...line.tier,...price}}
+  })
   const revised = nextLines.filter(line => line.vendorId === vendorId)
   const changed = revised.some(line => original.some(before => before.id === line.id && (before.net !== line.net || before.gross !== line.gross)))
   const confirmedOn = order.agreements?.[vendorId]?.confirmedOn || orderDate.format(new Date())
@@ -347,10 +434,7 @@ function renderCart() {
     const mail = emailOrder(v, lines)
     const agreement = currentAgreement(d, vendorId)
     return `<section class="card" data-order-vendor="${h(vendorId)}"><h3>${h(v?.name || 'Proveedor')}</h3>${lines.map(l => {
-      const sent = agreement?.original?.find(row => row.id === l.id)
-      const adjusted = sent && (sent.net !== l.net || sent.gross !== l.gross)
-      return `<div class="item"><div><strong>${h(l.name)}</strong><br><small>${fmt(l.size)} ${l.unit} por unidad de compra · ${clp(l.net)} neto<br>${clp(l.net / l.size)} / ${l.unit} neto</small>
-      ${adjusted ? `<br><small class="agreed-price">Enviado ${clp(sent.net)} neto · Acordado ${clp(l.net)} neto</small>` : ''}</div>
+      return `<div class="item"><div><strong>${h(l.name)}</strong><br><span data-line-price="${h(l.id)}">${cartLinePrice(l, agreement)}</span></div>
       <label>Unidades<input class="qty" type="number" min="1" max="99999" step="1" value="${l.qty}" data-qty="${h(l.id)}"></label><div class="actions"><button data-edit-line="${h(l.id)}">Editar</button><button class="danger" data-remove="${h(l.id)}">Quitar</button></div>
       ${editingLine === l.id ? `<form class="stack line-editor" data-line-editor="${h(l.id)}">
         <label>Proveedor y presentación<select name="offer">${options(alternatives(l).map(r => [r.id, `${vendor(r.vendorId)?.name} · ${fmt(r.size)} ${r.unit} · ${clp(r.net)} neto`]), l.id)}</select></label>
@@ -358,7 +442,7 @@ function renderCart() {
         <div class="actions"><button class="primary">Guardar cambios</button><button type="button" id="cancel-edit">Cancelar</button></div>
       </form>` : ''}</div>`
     }).join('')}
-      <div data-subtotal>${totalsHtml(totals(lines))}</div>
+      <div data-volume-note>${volumeNote(d, vendorId)}</div><div data-subtotal>${totalsHtml(totals(lines))}</div>
       <div class="actions">
       ${url ? `<a class="button primary" data-whatsapp href="${h(url)}" target="_blank" rel="noopener noreferrer">Abrir en WhatsApp ↗</a>` : '<button data-view="vendors">Configurar WhatsApp</button>'}
       ${mail ? `<a class="button" data-order-email href="${h(mail)}">Preparar correo</a>` : '<button data-view="vendors">Configurar correo</button>'}
@@ -481,7 +565,7 @@ function renderGuide() {
   app.innerHTML = intro('Guía de uso', 'De la lista de precios al pedido.') + `<ol class="guide-grid">
     <li class="card"><span class="guide-number" aria-hidden="true">01</span><h2>Conecta tus equipos</h2><p>Entra con el mismo correo en el celular y el computador. En <strong>Cuenta</strong>, guarda el nombre de tu negocio y pulsa <strong>Sincronizar</strong> si quieres verificar que los cambios llegaron.</p><button data-view="account">Ir a Cuenta</button></li>
     <li class="card"><span class="guide-number" aria-hidden="true">02</span><h2>Agrega un proveedor</h2><p>Guarda su nombre, contacto y, si vas a enviarle pedidos desde la app, su WhatsApp o correo.</p><button data-view="vendors">Ir a Proveedores</button></li>
-    <li class="card"><span class="guide-number" aria-hidden="true">03</span><h2>Carga sus precios</h2><p>Elige el proveedor y carga su lista en PDF, Excel o CSV. Si es una lista completa, deja marcada la opción de reemplazar las ofertas vigentes.</p><button data-view="import">Ir a Catálogos</button></li>
+    <li class="card"><span class="guide-number" aria-hidden="true">03</span><h2>Carga sus precios</h2><p>Elige el proveedor y carga su lista en PDF, Excel o CSV. Si tiene tarifa por monto, configura su base de cálculo en <strong>Proveedores</strong>. El pedido aplica la tarifa cuando califica.</p><button data-view="import">Ir a Catálogos</button></li>
     <li class="card"><span class="guide-number" aria-hidden="true">04</span><h2>Compara y arma el pedido</h2><p>Busca un producto. Compara el precio por kilo o unidad y el total con IVA. Si dos proveedores usan nombres distintos para el mismo producto, asigna el mismo nombre en <strong>Equivalencia</strong>.</p><button data-view="buy">Ir a Comparar</button></li>
     <li class="card"><span class="guide-number" aria-hidden="true">05</span><h2>Envía y confirma el acuerdo</h2><p>Envía el pedido por WhatsApp o correo y confirma el envío. Cuando el proveedor responda, abre <strong>Registrar respuesta del proveedor</strong>. Guarda el acuerdo, aunque los precios sigan iguales.</p><button data-view="drafts">Ir a Pedidos</button></li>
     <li class="card"><span class="guide-number" aria-hidden="true">06</span><h2>Revisa tus compras</h2><p>En <strong>Compras</strong>, elige un rango por fecha de confirmación y toca un producto para ver el detalle. Si solo confirmó un proveedor, el total incluye su parte del pedido.</p><button data-view="purchases">Ir a Compras</button></li>
@@ -519,7 +603,11 @@ function render() {
   }
   if (view === 'vendors') {
     app.innerHTML = intro('Proveedores', 'Guarda el WhatsApp y el correo donde enviarás los pedidos.') +
-      `<div class="stack">${[...state.vendors, {id:'',name:'',phone:''}].map(v => `<form class="card fields vendor-form" data-vendor="${h(v.id)}"><label>Proveedor<input name="name" required maxlength="100" value="${h(v.name)}" placeholder="Nombre del proveedor"></label><label>Contacto<input name="contactName" maxlength="100" value="${h(v.contactName)}" placeholder="Ej. Camila"></label><label>WhatsApp<input name="phone" type="tel" value="${h(v.phone)}" placeholder="+56 9 1234 5678"></label><label>Correo de pedidos<input name="email" type="email" value="${h(v.email)}" placeholder="pedidos@proveedor.cl"></label><button class="${v.id ? 'secondary' : 'primary'}">${v.id ? 'Guardar' : 'Agregar proveedor'}</button></form>`).join('')}</div>`
+      `<div class="stack">${[...state.vendors, {id:'',name:'',phone:''}].map(v => `<form class="card fields vendor-form" data-vendor="${h(v.id)}"><label>Proveedor<input name="name" required maxlength="100" value="${h(v.name)}" placeholder="Nombre del proveedor"></label><label>Contacto<input name="contactName" maxlength="100" value="${h(v.contactName)}" placeholder="Ej. Camila"></label><label>WhatsApp<input name="phone" type="tel" value="${h(v.phone)}" placeholder="+56 9 1234 5678"></label><label>Correo de pedidos<input name="email" type="email" value="${h(v.email)}" placeholder="pedidos@proveedor.cl"></label><button class="${v.id ? 'secondary' : 'primary'}">${v.id ? 'Guardar' : 'Agregar proveedor'}</button>
+      <details class="vendor-volume"${v.volume?.minimum && !v.volume.basis ? ' open' : ''}><summary>Tarifa por volumen${v.volume?.minimum ? ` · Sobre ${clp(v.volume.minimum)}${v.volume.basis ? '' : ' · Pendiente'}` : ''}</summary>
+      <div class="fields"><label>Monto que debe superar el pedido (CLP)<input type="number" min="1" step="1" name="volumeMinimum" value="${h(v.volume?.minimum)}" placeholder="Ej. 500000"></label>
+      <label>Base de cálculo<select name="volumeBasis">${options(volumeBases,v.volume?.basis || '')}</select></label></div></details>
+      </form>`).join('')}</div>`
   }
   if (view === 'drafts') {
     app.innerHTML = intro('Pedidos', 'Retoma un pedido guardado o empieza uno nuevo.') + '<p><button class="primary" id="new-draft">Nuevo pedido</button></p>' +
@@ -535,18 +623,20 @@ function renderImport() {
   app.innerHTML = intro('Catálogos', 'Carga una lista para usar sus precios en Comparar. Puedes editarla después.') + (state.vendors.length
     ? `<form id="upload" class="card stack"><div class="fields"><label>Proveedor<select name="vendor" required>${providers()}</select></label></div>
       <label>Archivo<input name="file" type="file" required accept=".pdf,.xlsx,.xls,.csv,.tsv,.ods,.png,.jpg,.jpeg,.webp"></label>
-      <small>Para Excel o CSV, usa columnas Producto, Formato, Unidad, Precio neto y Precio con IVA. Los precios corresponden a la unidad de compra.</small>
+      <small>Para Excel o CSV, usa columnas Producto, Formato, Unidad, Precio neto y Precio con IVA. Puedes agregar Precio alternativo con IVA y Mínimo de unidades. Los precios corresponden a la unidad de compra.</small>
       <label class="check"><input type="checkbox" name="replace" checked> Reemplazar las ofertas vigentes del proveedor</label>
       <div class="actions"><button class="primary" ${busy ? 'disabled' : ''}>${busy ? 'Leyendo…' : 'Cargar catálogo'}</button><button type="button" id="manual" ${busy ? 'disabled' : ''}>Ingreso manual</button><a class="button" href="plantilla.xlsx" download="Plantilla de catálogo.xlsx">Plantilla Excel</a></div></form>`
     : '<div class="card"><p>Agrega un proveedor para cargar su primer catálogo.</p><button class="primary" data-view="vendors">Agregar proveedor</button></div>') +
     (review ? `<section class="card" id="catalog-editor"><h2>${review.catalog ? 'Editar catálogo' : 'Ingreso manual'}</h2><p>${h(review.file)} · ${review.rows.length} filas.</p>
-    <div class="review"><table><thead><tr><th>Incluir</th><th>Producto</th><th>Contenido</th><th>Unidad</th><th>Neto por unidad</th><th>Con IVA por unidad</th><th>Disponible</th></tr></thead><tbody>
+    <div class="review"><table><thead><tr><th>Incluir</th><th>Producto</th><th>Contenido</th><th>Unidad</th><th>Neto por unidad</th><th>Con IVA por unidad</th><th>Precio alternativo con IVA</th><th>Mínimo de unidades</th><th>Disponible</th></tr></thead><tbody>
     ${review.rows.map((r,i) => `<tr data-row="${i}"><td><input type="checkbox" aria-label="Incluir fila ${i+1}" data-field="include" ${r.include ? 'checked' : ''}></td>
       <td><input aria-label="Producto ${i+1}" data-field="name" value="${h(r.name)}">${r.code || r.origin ? `<small>${h([r.code,r.origin].filter(Boolean).join(' · '))}</small>` : ''}</td>
       <td><input inputmode="decimal" aria-label="Contenido ${i+1}" data-field="size" value="${h(r.size)}"></td>
       <td><select aria-label="Unidad ${i+1}" data-field="unit">${options([['kg','kg'],['unidad','unidad']],r.unit)}</select></td>
       <td><input inputmode="numeric" aria-label="Neto ${i+1}" data-field="net" value="${h(r.net || '')}"></td>
       <td><input inputmode="numeric" aria-label="Con IVA ${i+1}" data-field="gross" value="${h(r.gross || '')}"></td>
+      <td><input inputmode="numeric" aria-label="Precio alternativo con IVA ${i+1}" data-field="alternateGross" value="${h(r.alternateGross ?? r.tier?.gross ?? '')}"></td>
+      <td><input inputmode="numeric" aria-label="Mínimo de unidades ${i+1}" data-field="minimumUnits" value="${h(r.minimumUnits ?? r.tier?.minQty ?? '')}" placeholder="Por monto"></td>
       <td><input type="checkbox" aria-label="Disponible ${i+1}" data-field="available" ${r.available ? 'checked' : ''}></td></tr>`).join('')}
     </tbody></table></div><div class="actions" style="margin-top:.8rem"><button id="append">Agregar fila</button>
     <button class="primary" id="activate">Guardar catálogo</button><button id="cancel-catalog">Cancelar</button></div></section>` : '') +
@@ -558,7 +648,7 @@ function rememberPrices(vendorId, rows) {
   const history = state.lastPrices[vendorId] ?? []
   const valid = rows.filter(canOrder)
   state.lastPrices[vendorId] = [
-    ...valid.map(({name, size, unit, net, signature, code, origin}) => ({name, size, unit, net, signature, code, origin})),
+    ...valid.map(({name, size, unit, net, signature, code, origin, tier}) => ({name, size, unit, net, signature, code, origin, tier})),
     ...history.filter(previous => !valid.some(row => samePresentation(previous, row)))
   ]
 }
@@ -567,9 +657,21 @@ function activate(entry, imported = false) {
     const normalized = offer(r.name.trim(), number(r.size), number(r.net, true), number(r.gross, true), r.unit, r.available)
     if (imported && !normalized.net) normalized.available = false
     const previous = entry.catalog?.rows.find(row => row.id === r.id)
-    const unchanged = previous && Object.keys(normalized).every(key => previous[key] === normalized[key])
-    return {...normalized, code: r.code || '', origin: r.origin || '', id: unchanged ? r.id : id(), signature: signature(r,entry.vendorId)}
+    const alternateGross = number(r.alternateGross ?? r.tier?.gross, true)
+    const minimumUnits = number(r.minimumUnits ?? r.tier?.minQty)
+    const tier = alternateGross > 0 && alternateGross < normalized.gross
+      ? {gross:alternateGross, net:Math.round(alternateGross / 1.19), ...(minimumUnits > 1 ? {minQty:minimumUnits} : {})} : undefined
+    if (!imported && ((r.alternateGross && !tier) || (r.minimumUnits && (!tier || minimumUnits < 2 || !Number.isSafeInteger(minimumUnits))))) {
+      normalized.invalidTier = true
+    }
+    const unchanged = previous && Object.keys(normalized).every(key => previous[key] === normalized[key]) &&
+      previous.tier?.gross === tier?.gross && previous.tier?.minQty === tier?.minQty
+    return {...normalized, tier, code: r.code || '', origin: r.origin || '', id: unchanged ? r.id : id(), signature: signature(r,entry.vendorId)}
   })
+  if (rows.some(row => row.invalidTier)) {
+    notify('El precio alternativo debe ser menor que el base. Si aplica por cantidad, indica un mínimo entero desde 2.')
+    return
+  }
   if (imported && !rows.some(canOrder)) {
     notify('No se detectaron ofertas con precio. Revisa el archivo o usa la plantilla Excel.')
     return
@@ -583,6 +685,9 @@ function activate(entry, imported = false) {
   for (const row of rows) {
     const previous = current.findLast(candidate => samePresentation(candidate, row)) || prior.find(candidate => samePresentation(candidate, row))
     if (canOrder(row) && previous) row.previousNet = entry.catalog && row.net === previous.net ? previous.previousNet : previous.net
+    if (row.tier && previous?.tier && row.tier.minQty === previous.tier.minQty) {
+      row.tier.previousNet = row.tier.net === previous.tier.net ? previous.tier.previousNet : previous.tier.net
+    }
   }
   rememberPrices(entry.vendorId, [...rows.filter(canOrder), ...current.filter(previous => !rows.some(row => canOrder(row) && samePresentation(previous, row)))])
   if (entry.catalog) entry.catalog.rows = rows
@@ -594,11 +699,14 @@ function activate(entry, imported = false) {
     state.catalogs = state.catalogs.filter(c => c.rows.length)
   }
   if (!entry.catalog) state.catalogs.push({vendorId: entry.vendorId, rows, file: entry.file, date: new Date().toLocaleDateString('es-CL')})
+  const supplier = vendor(entry.vendorId)
+  if (entry.rows.volumeMinimum && !supplier.volume?.minimum) supplier.volume = {minimum:entry.rows.volumeMinimum, basis:''}
+  const pendingVolume = rows.some(row => row.tier && !row.tier.minQty) && !supplier.volume?.basis
   review = null
   save()
   render()
   const missingPrices = imported ? rows.filter(row => !row.net).length : 0
-  notify(`${entry.catalog ? 'Catálogo actualizado.' : `Catálogo cargado con ${rows.length} ofertas.`}${missingPrices ? ` ${missingPrices} sin precio quedaron como no disponibles.` : ''}`)
+  notify(`${entry.catalog ? 'Catálogo actualizado.' : `Catálogo cargado con ${rows.length} ofertas.`}${missingPrices ? ` ${missingPrices} sin precio quedaron como no disponibles.` : ''}${pendingVolume ? ' Confirma la base de cálculo de VOL. en Proveedores.' : ''}`, pendingVolume)
 }
 document.addEventListener('input', e => {
   const el = e.target
@@ -647,12 +755,22 @@ app.addEventListener('change', e => {
     return
   }
   if (!el.dataset.qty) return
-  const line = draft().lines.find(l => l.id === el.dataset.qty)
-  line.qty = Math.min(99999, Math.max(1, Math.trunc(Number(el.value)) || 1))
-  el.value = line.qty
+  const order = draft()
+  const line = order.lines.find(l => l.id === el.dataset.qty)
+  const qty = Math.min(99999, Math.max(1, Math.trunc(Number(el.value)) || 1))
+  el.value = qty
+  if (qty === line.qty) return
+  line.qty = qty
+  repriceVendor(order, line.vendorId)
   save()
   const group = el.closest('[data-order-vendor]')
-  const lines = draft().lines.filter(l => l.vendorId === line.vendorId)
+  const lines = orderLines(order, line.vendorId)
+  const prices = new Map(lines.map(row => [row.id,row]))
+  const agreement = currentAgreement(order, line.vendorId)
+  group.querySelectorAll('[data-line-price]').forEach(element => {
+    element.innerHTML = cartLinePrice(prices.get(element.dataset.linePrice), agreement)
+  })
+  $('[data-volume-note]', group).innerHTML = volumeNote(order, line.vendorId)
   $('[data-subtotal]', group).innerHTML = totalsHtml(totals(lines))
   const link = $('[data-whatsapp]', group)
   if (link) link.href = whatsapp(vendor(line.vendorId), lines)
@@ -662,6 +780,7 @@ app.addEventListener('change', e => {
   $('#order-total').innerHTML = totalsHtml(totals(draft().lines))
   const shortcut = $('#order-shortcut')
   if (shortcut) shortcut.textContent = `Ver pedido · ${clp(totals(draft().lines).gross)}`
+  renderResults(false)
 })
 document.addEventListener('click', e => {
   const link = e.target.closest('a[data-whatsapp], a[data-order-email]')
@@ -794,8 +913,10 @@ document.addEventListener('click', e => {
     const line = draft().lines.find(l => l.id === row.id)
     if (line) line.qty = Math.min(line.qty + 1, 99999)
     else draft().lines.push({...row, qty: 1})
+    repriceVendor(draft(), row.vendorId)
     save()
     renderCart()
+    renderResults(false)
     notify('Presentación agregada al pedido.')
   }
   if (data.alias) {
@@ -839,9 +960,12 @@ document.addEventListener('click', e => {
     }
   }
   if (data.remove) {
+    const line = draft().lines.find(l => l.id === data.remove)
     if (editingLine === data.remove) editingLine = null
     draft().lines = draft().lines.filter(l => l.id !== data.remove)
+    if (line) repriceVendor(draft(), line.vendorId)
     save(); renderCart()
+    renderResults(false)
   }
   if (data.open) { state.active = data.open; query = ''; editingLine = null; view = 'buy'; save(); render() }
   if (data.delete && confirm('¿Eliminar este borrador?')) {
@@ -927,14 +1051,19 @@ app.addEventListener('submit', async e => {
     const replacement = alternatives(lines[index]).find(row => row.id === data.get('offer'))
     const qty = Number(data.get('qty'))
     if (!replacement || !Number.isInteger(qty) || qty < 1 || qty > 99999) { notify('Revisa la presentación y la cantidad.'); return }
+    const previous = lines[index]
     const existing = lines.find((line, i) => i !== index && line.id === replacement.id)
     if (existing && existing.qty + qty > 99999) { notify('La cantidad combinada supera los 99.999 unidades.'); return }
     if (existing) {
       existing.qty += qty
       lines.splice(index, 1)
     } else lines[index] = {...replacement, qty}
+    if (previous.id !== replacement.id || previous.qty !== qty) {
+      repriceVendor(draft(), previous.vendorId)
+      if (previous.vendorId !== replacement.vendorId) repriceVendor(draft(), replacement.vendorId)
+    }
     editingLine = null
-    save(); renderCart(); notify('Pedido actualizado.')
+    save(); renderCart(); renderResults(false); notify('Pedido actualizado.')
     return
   }
   if ('vendor' in form.dataset) {
@@ -942,10 +1071,19 @@ app.addEventListener('submit', async e => {
     const phone = data.get('phone').trim().replace(/[+\s()-]/g, '')
     const email = data.get('email').trim()
     const contactName = data.get('contactName').trim()
+    const minimum = Number(data.get('volumeMinimum') || 0)
+    const basis = data.get('volumeBasis') || ''
     if (!name || (phone && !/^[1-9]\d{7,14}$/.test(phone))) { notify('Ingresa un nombre y, si corresponde, un número internacional válido.'); return }
+    if (!Number.isSafeInteger(minimum) || minimum < 0 || (basis && (!minimum || !volumeBases.some(([key]) => key === basis)))) {
+      notify('Ingresa un monto entero y una base válida para la tarifa VOL.'); return
+    }
+    const volume = minimum ? {minimum, basis} : undefined
     const record = vendor(form.dataset.vendor)
-    if (record) Object.assign(record,{name,phone,email,contactName})
-    else state.vendors.push({id:id(),name,phone,email,contactName})
+    if (record) {
+      Object.assign(record,{name,phone,email,contactName,volume})
+      const order = draft()
+      if (!order.saved && !currentAgreement(order, record.id) && !sentToVendor(order, record.id)) repriceVendor(order, record.id)
+    } else state.vendors.push({id:id(),name,phone,email,contactName,volume})
     save(); render(); notify('Proveedor guardado.')
   }
   if (form.id === 'upload' && !busy) {

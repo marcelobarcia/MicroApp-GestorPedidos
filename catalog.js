@@ -13,6 +13,46 @@ const offer = (name = '', size = 1, net = 0, gross = 0, unit = 'kg', available =
   name, size, net: net || (gross ? Math.round(gross / 1.19) : 0), gross: gross || (net ? Math.round(net * 1.19) : 0), unit, available
 })
 const unavailable = /sin\s*stock|s\s*\/\s*existencia|agotado/i
+function tieredOffer(row, alternateGross, minimumUnits = 0) {
+  if (alternateGross > 0 && alternateGross < row.gross) {
+    row.tier = {gross:alternateGross, net:Math.round(alternateGross / 1.19)}
+    if (minimumUnits > 1) row.tier.minQty = minimumUnits
+  }
+  return row
+}
+function veguitaTable(items) {
+  const text = items.filter(item => item.str?.trim()).map(item => ({
+    value:item.str.trim(), x:item.transform[4], y:item.transform[5], center:item.transform[4] + item.width / 2
+  }))
+  const headers = text.filter(item => /^(prem|x 1)$/.test(fold(item.value))).sort((a,b) => b.y - a.y)
+  return headers.flatMap((base, index) => {
+    const byQuantity = fold(base.value) === 'x 1'
+    const other = text.find(item => fold(item.value) === (byQuantity ? 'x 5' : 'vol') && Math.abs(item.y - base.y) < 5 && item.x > base.x)
+    if (!other) return []
+    const format = text.find(item => fold(item.value) === 'formato' && Math.abs(item.y - base.y) < 15 && item.x < base.x)
+    const split = (base.center + other.center) / 2
+    const end = headers[index + 1]?.y ?? -Infinity
+    const section = text.filter(item => item.y < base.y - 5 && item.y > end)
+    const money = section.filter(item => /^\$\s*[\d.]+$/.test(item.value))
+    const nearby = (source, y) => source.filter(item => Math.abs(item.y - y) <= 12)
+      .sort((a,b) => Math.abs(a.y-y) - Math.abs(b.y-y))[0]
+    return money.filter(item => item.center < split && item.center > base.center - 37).flatMap(item => {
+      const spec = format && nearby(section.filter(part =>
+        Math.abs(part.center - format.center) < 35 && /^\d+(?:[,.]\d+)?\s*(?:kg|g(?:rs?)?\.?|un(?:idades)?\.?|cjs?\.?|cajas?)$/i.test(part.value)), item.y)
+      const name = nearby(section.filter(part => part.x < (format ? format.x - 30 : base.x - 90) && /^\p{L}/u.test(part.value)), item.y)
+      if (!name) return []
+      const measure = spec?.value.match(/^(\d+(?:[,.]\d+)?)\s*(kg|g(?:rs?)?|un(?:idades)?|cjs?|cajas?)/i)
+      const kind = measure?.[2].toLowerCase() === 'kg' ? 'kg' : 'unidad'
+      const gramPack = /^g/.test(measure?.[2].toLowerCase() || '')
+      const size = measure && !gramPack ? number(measure[1]) : 1
+      if (!(size > 0)) return []
+      const product = gramPack ? `${name.value} · ${spec.value}` : name.value
+      const gross = Math.round(number(item.value, true) * size)
+      const alt = nearby(money.filter(part => part.center >= split), item.y)
+      return [tieredOffer(offer(product, size, 0, gross, kind, !unavailable.test(name.value)), Math.round(number(alt?.value, true) * size), byQuantity ? 5 : 0)]
+    })
+  })
+}
 function parseLines(lines, format) {
   const rows = []
   for (const original of lines) {
@@ -82,13 +122,15 @@ function sheetRows(grid) {
   const gross = column(/^(?:precio|valor|total|bruto|precio con iva|total con iva|precio bruto)$/)
   const netKg = column(/(?:kilo|kg).*(?:neto|sin iva)|(?:neto|sin iva).*(?:kilo|kg)/)
   const grossKg = column(/(?:kilo|kg).*con iva|con iva.*(?:kilo|kg)/)
+  const alternate = column(/^(?:precio alternativo con iva|precio volumen con iva)$/)
+  const minimumUnits = column(/^minimo de unidades$/)
   return grid.slice(header + 1).filter(row => String(row[name] ?? '').trim()).map(row => {
     const amount = number(String(row[size] ?? '').match(/\d+(?:[,.]\d+)?/)?.[0]) || 1
     const kind = /kg|kilo/.test(fold(row[unit])) || netKg >= 0 || grossKg >= 0 || /kg|kilo|peso/.test(fold(row[size]) + ' ' + labels[size]) ? 'kg' : 'unidad'
     const item = offer(String(row[name]).trim(), amount, number(row[net], true) || Math.round(number(row[netKg], true) * amount), number(row[gross], true) || Math.round(number(row[grossKg], true) * amount), kind, !unavailable.test(row.join(' ')))
     item.code = String(row[code] ?? '')
     item.origin = String(row[origin] ?? '')
-    return item
+    return tieredOffer(item, number(row[alternate], true), number(row[minimumUnits]))
   })
 }
 function delimitedRows(text, delimiter) {
@@ -161,6 +203,7 @@ function detectCatalog(value) {
   if (/\bterra verde\b/.test(text)) return 'terra'
   if (/\bstarfood\b/.test(text)) return 'star'
   if (/\balana\b|precio neto caja|lista mayoristas/.test(text)) return 'alana'
+  if (/\b(?:emporio la )?veguita\b|emporiolaveguita/.test(text)) return 'veguita'
   return ''
 }
 function within(operation, stage, ms = 30000) {
@@ -223,8 +266,17 @@ async function readCatalog(file, notify, supplierName = '') {
       for (let i = 1; i <= pdf.numPages; i++) {
         notify(`Leyendo página ${i} de ${pdf.numPages}…`)
         const page = await within(pdf.getPage(i), `Abriendo página ${i}`)
-        const text = pdfLines((await within(page.getTextContent(), `Leyendo página ${i}`)).items)
-        pages.push({page, text})
+        const {items} = await within(page.getTextContent(), `Leyendo página ${i}`)
+        const text = pdfLines(items)
+        pages.push({page, text, items})
+      }
+      const combinedText = pages.flatMap(page => page.text).join(' ')
+      if (hint === 'veguita' || detectCatalog(combinedText) === 'veguita') {
+        const offers = pages.flatMap(({items}) => veguitaTable(items))
+        if (offers.length) {
+          offers.volumeMinimum = number(combinedText.match(/\bsobre\s*\$\s*([\d.]+)/i)?.[1]?.replace(/\.$/, ''), true)
+          return offers
+        }
       }
       if (starfoodProductBrochure(pages, hint)) {
         throw Object.assign(new Error('El folleto de Starfood no contiene una lista de precios.'), {code: 'STARFOOD_BROCHURE'})
