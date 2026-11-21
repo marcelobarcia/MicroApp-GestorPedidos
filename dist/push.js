@@ -12,7 +12,6 @@ function deviceId() {
   return value
 }
 const supported = () => 'serviceWorker' in navigator && 'PushManager' in globalThis && 'Notification' in globalThis
-const needsInstall = () => /iPhone|iPad|iPod/.test(navigator.userAgent) && !navigator.standalone && !matchMedia('(display-mode: standalone)').matches
 const encodeKey = value => Uint8Array.from(atob(value.replace(/-/g,'+').replace(/_/g,'/')),c=>c.charCodeAt(0))
 async function subscription() {
   const registration=await navigator.serviceWorker.ready
@@ -28,18 +27,17 @@ function paint() {
   const button=(label,action) => {
     const el=document.createElement('button'); el.textContent=label; el.dataset.pushAction=action; el.disabled=busy || (action==='enable' && !prepared); actions.append(el)
   }
-  if(needsInstall()) status.textContent='En iPhone: abre esta dirección en Safari, pulsa Compartir → Agregar a pantalla de inicio y activa Abrir como app web si aparece. Luego abre el icono Pedidos y vuelve a Cuenta para activar los avisos.'
-  else if(!supported()) status.textContent='Este navegador no permite avisos. Abre la app desde Safari o Chrome en tu celular.'
+  if(!supported()) status.textContent=/iPhone|iPad|iPod/.test(navigator.userAgent)?'Este iPhone no está ofreciendo notificaciones a esta ventana. Los avisos requieren iOS 16.4 o posterior y abrir Pedidos desde la pantalla de inicio.':'Este navegador no permite avisos. Abre la app desde Safari o Chrome en tu celular.'
   else if(!cloud.profile()) status.textContent='Inicia sesión con la cuenta del negocio para activar los avisos.'
   else {
     status.textContent=message || (registered?'Notificaciones activadas en este celular.':prepared?'Los avisos todavía no están activados en este celular.':'Preparando la activación de avisos…')
-    if(registered) { button('Probar aviso','test'); button('Desactivar avisos','disable') }
+    if(registered) { button('Probar en este equipo','test'); button('Desactivar avisos','disable') }
     else { button('Activar notificaciones','enable'); if(!prepared && message) button('Volver a intentar','refresh') }
   }
 }
 async function refresh() {
   paint()
-  if(!supported() || needsInstall() || !cloud.profile()) return
+  if(!supported() || !cloud.profile()) return
   try {
     const [registration,settings]=await Promise.all([navigator.serviceWorker.ready,cloud.pushRequest({action:'config'})])
     prepared={registration,publicKey:settings.publicKey}
@@ -77,7 +75,7 @@ document.addEventListener('click', async event => {
     else if(action==='enable') {
       const sub=await pendingSubscription
       await cloud.pushRequest({action:'subscribe',deviceId:deviceId(),subscription:sub.toJSON()})
-      registered=true; message='Notificaciones activadas en este celular. Pulsa Probar aviso para comprobarlas.'
+      registered=true; message='Notificaciones activadas en este equipo. Pulsa Probar en este equipo para comprobarlas.'
     } else if(action==='disable') await disconnect()
     else if(action==='test') {
       await cloud.pushRequest({action:'test',deviceId:deviceId()})

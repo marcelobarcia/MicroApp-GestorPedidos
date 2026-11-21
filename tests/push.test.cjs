@@ -46,12 +46,12 @@ test('service worker shows persistent audible notification and rejects external 
   assert.equal(opened[0],'https://example.test/app/');
 });
 
-test('iPhone subscription starts inside the tap before any asynchronous network request',async()=>{
+test('iPhone can subscribe despite missing standalone flags, directly inside the tap',async()=>{
   const calls=[], listeners={},storage=new Map();
   const registration={pushManager:{getSubscription:async()=>null,subscribe:()=>{calls.push('subscribe');return Promise.resolve({toJSON:()=>({endpoint:'test'})});}}};
   const context={globalThis:null,Uint8Array,atob,crypto:require('node:crypto').webcrypto,setTimeout,
-    navigator:{userAgent:'iPhone',standalone:true,serviceWorker:{ready:Promise.resolve(registration),addEventListener(){}}},
-    PushManager:function(){},Notification:{permission:'granted'},matchMedia:()=>({matches:true}),
+    navigator:{userAgent:'iPhone',standalone:false,serviceWorker:{ready:Promise.resolve(registration),addEventListener(){}}},
+    PushManager:function(){},Notification:{permission:'granted'},matchMedia:()=>({matches:false}),
     localStorage:{getItem:k=>storage.get(k),setItem:(k,v)=>storage.set(k,v),removeItem:k=>storage.delete(k)},
     document:{querySelector:()=>null,addEventListener:(name,fn)=>listeners[name]=fn},
     orderCloud:{profile:()=>({id:'account'}),pushRequest:async data=>{calls.push(data.action);return {publicKey:'AQID'};}}
