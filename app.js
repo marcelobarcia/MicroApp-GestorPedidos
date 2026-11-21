@@ -498,6 +498,7 @@ function renderCart() {
       <label>Unidades<input class="qty" type="number" min="1" max="99999" step="1" value="${l.qty}" data-qty="${h(l.id)}"></label><div class="actions"><button data-edit-line="${h(l.id)}">Editar</button><button class="danger" data-remove="${h(l.id)}">Quitar</button></div>
       ${editingLine === l.id ? `<form class="stack line-editor" data-line-editor="${h(l.id)}">
         <label>Proveedor y presentación<select name="offer">${options(alternatives(l).map(r => [r.id, `${vendor(r.vendorId)?.name} · ${fmt(r.size)} ${r.unit} · ${clp(r.net)} neto`]), l.id)}</select></label>
+        <label>Corregir unidad de medida<select name="unit">${options([['kg','kg'],['unidad','unidad']], l.unit)}</select></label><small>Esta corrección mantiene el precio y la cantidad. Si eliges otra presentación, se usará su unidad.</small>
         <label>Cantidad de unidades<input name="qty" type="number" min="1" max="99999" step="1" value="${l.qty}" required></label>
         <div class="actions"><button class="primary">Guardar cambios</button><button type="button" id="cancel-edit">Cancelar</button></div>
       </form>` : ''}</div>`
@@ -1116,12 +1117,14 @@ app.addEventListener('submit', async e => {
     const qty = Number(data.get('qty'))
     if (!replacement || !Number.isInteger(qty) || qty < 1 || qty > 99999) { notify('Revisa la presentación y la cantidad.'); return }
     const previous = lines[index]
+    const unit = data.get('unit')
+    if (!['kg', 'unidad'].includes(unit)) { notify('Revisa la unidad de medida.'); return }
     const existing = lines.find((line, i) => i !== index && line.id === replacement.id)
     if (existing && existing.qty + qty > 99999) { notify('La cantidad combinada supera los 99.999 unidades.'); return }
     if (existing) {
       existing.qty += qty
       lines.splice(index, 1)
-    } else lines[index] = {...replacement, qty}
+    } else lines[index] = {...replacement, qty, unit: previous.id === replacement.id ? unit : replacement.unit}
     if (previous.id !== replacement.id || previous.qty !== qty) {
       repriceVendor(draft(), previous.vendorId)
       if (previous.vendorId !== replacement.vendorId) repriceVendor(draft(), replacement.vendorId)
