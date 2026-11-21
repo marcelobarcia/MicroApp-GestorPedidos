@@ -363,11 +363,13 @@ function deliveryHtml(order, vendorId) {
   const agreement = currentAgreement(order, vendorId)
   const deliveries = deliveryState(order, vendorId)
   const status = agreement ? `<span class="tag">${agreement.changed ? 'Confirmado con cambios' : 'Confirmado'}</span>` : ''
-  const response = agreement || deliveries.length
-    ? `<button data-vendor-response>Editar precios acordados</button>` : ''
+  const response = agreement
+    ? `<button data-vendor-response>Editar precios acordados</button>`
+    : deliveries.some(([, record]) => record.sent)
+      ? `<button class="primary" data-confirm-all>Confirmó todo</button><button data-vendor-response>Confirmó con cambios</button>` : ''
   return deliveries.map(([channel, record]) => record.sent
     ? `<span class="tag">Enviado por ${channels[channel]}</span>`
-    : `<button data-confirm-send="${channel}">Confirmar envío por ${channels[channel]}</button>`).join('') + status + response
+    : `<button data-confirm-send="${channel}">Ya lo envié</button>`).join('') + status + response
 }
 function responseForm(lines, vendorName) {
   return `<form class="stack line-editor" id="vendor-response">
@@ -505,7 +507,7 @@ function renderCart() {
     }).join('')}
       <div data-volume-note>${volumeNote(d, vendorId)}</div><div data-subtotal>${totalsHtml(totals(lines))}</div>
       <div class="actions">
-      ${url ? `<a class="button primary" data-whatsapp href="${h(url)}" target="_blank" rel="noopener noreferrer">Abrir en WhatsApp ↗</a>` : '<button data-view="vendors">Configurar WhatsApp</button>'}
+      ${url ? `<a class="button primary" data-whatsapp href="${h(url)}" target="_blank" rel="noopener noreferrer">Enviar por WhatsApp ↗</a>` : '<button data-view="vendors">Configurar WhatsApp</button>'}
       ${mail ? `<a class="button" data-order-email href="${h(mail)}">Preparar correo</a>` : '<button data-view="vendors">Configurar correo</button>'}
       </div><div class="actions delivery" data-delivery>${deliveryHtml(d, vendorId)}</div>
       ${responseEditor?.orderId === d.id && responseEditor.vendorId === vendorId ? responseForm(lines, v?.name) : ''}</section>`
@@ -883,6 +885,12 @@ document.addEventListener('click', e => {
     $('#vendor-response input')?.focus()
     return
   }
+  if ('confirmAll' in data) {
+    const vendorId = button.closest('[data-order-vendor]').dataset.orderVendor
+    const order = draft()
+    acknowledgePrices({orderId:order.id, vendorId, version:orderVersion(orderLines(order, vendorId))}, new FormData())
+    return
+  }
   if (button.id === 'cancel-response') {
     responseEditor = null
     renderCart()
@@ -928,22 +936,14 @@ document.addEventListener('click', e => {
     const order = draft()
     const channel = data.confirmSend
     const record = deliveryState(order, vendorId).find(([name]) => name === channel)?.[1]
-    const dialog = $('#send-dialog')
-    if (!record || record.sent || dialog.open) return
-    $('#send-dialog-message').textContent = `¿Ya enviaste el pedido a ${vendor(vendorId)?.name || 'este proveedor'} por ${channels[channel]}?`
-    dialog.returnValue = ''
-    dialog.addEventListener('close', () => {
-      if (dialog.returnValue !== 'confirm' || draft() !== order ||
-          !deliveryState(order, vendorId).some(([name, current]) => name === channel && current === record && !current.sent)) return
-      record.sent = true
-      if (!save()) { record.sent = false; return }
-      const delivery = $('[data-delivery]', group)
-      delivery.innerHTML = deliveryHtml(order, vendorId)
-      delivery.tabIndex = -1
-      delivery.focus()
-      notify(orderStatus(order))
-    }, {once: true})
-    dialog.showModal()
+    if (!record || record.sent) return
+    record.sent = true
+    if (!save()) { record.sent = false; return }
+    const delivery = $('[data-delivery]', group)
+    delivery.innerHTML = deliveryHtml(order, vendorId)
+    delivery.tabIndex = -1
+    delivery.focus()
+    notify(orderStatus(order))
     return
   }
   if (data.view) {
