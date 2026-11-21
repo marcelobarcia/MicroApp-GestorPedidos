@@ -227,3 +227,7 @@ td:nth-child(2) input{min-width:195px}
   .hero-stat{flex-direction:column;align-items:end;gap:.1rem}
   .comparison-offer .primary{padding-inline:.45rem}
 }
+/* A short, readable notice while the app is open. Respect reduced motion. */
+.push-banner{position:fixed;inset:auto 1rem 1rem;z-index:1000;max-width:38rem;margin:auto;padding:1rem 1.25rem;border-radius:1rem;background:#173e2b;color:#fff;box-shadow:0 6px 30px #0003;animation:push-appear .3s ease-out}
+@keyframes push-appear{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
+@media(prefers-reduced-motion:reduce){.push-banner{animation:none}}

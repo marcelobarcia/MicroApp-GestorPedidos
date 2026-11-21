@@ -1,0 +1,6 @@
+{
+  "name": "gestor-pedidos-checks",
+  "private": true,
+  "scripts": {"test": "node --test tests/*.test.cjs"},
+  "devDependencies": {"typescript": "5.7.3", "web-push": "3.6.7"}
+}
