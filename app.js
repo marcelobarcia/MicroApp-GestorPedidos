@@ -532,8 +532,9 @@ function renderAccount() {
     <label>Contraseña<input name="password" autocomplete="current-password" type="password" minlength="8" required></label>
     <div class="actions"><button class="primary">Iniciar sesión</button><button name="mode" value="signup">Crear cuenta</button></div></form>` :
     '<p>La sincronización todavía no está configurada. Tus datos se guardan en este navegador.</p>'}
-    </section><section class="card stack account-card"><h2>Respaldo de datos</h2><p>Descarga una copia para mover tus catálogos y pedidos a otro dispositivo o a tu cuenta.</p>
+    </section>${globalThis.orderPush?.panel() || ''}<section class="card stack account-card"><h2>Respaldo de datos</h2><p>Descarga una copia para mover tus catálogos y pedidos a otro dispositivo o a tu cuenta.</p>
     <div class="actions"><button id="backup-workspace">Descargar respaldo</button><label>Importar respaldo<input type="file" id="restore-workspace" accept=".json,application/json"></label></div></section>`
+  void globalThis.orderPush?.refresh()
 }
 function purchasePeriods() {
   const today = orderDate.format(new Date())
@@ -1197,11 +1198,19 @@ async function restoreWorkspace(file) {
     notify('Respaldo importado.')
   } catch (error) { notify(error.message, true) }
 }
+const linkedOrder = new URLSearchParams(location.search).get('order')
+function openLinkedOrder() {
+  if (!linkedOrder) return
+  const order=state.drafts.find(item=>item.id===linkedOrder)
+  if(order) { state.active=order.id; view='buy' }
+  else if(!cloud?.profile()) view='account'
+}
 ensureOrderNumbers(!cloud?.profile() || Boolean(cloud.workspace()))
+openLinkedOrder()
 render()
 cloud?.init({
   defaults, local:localData,
-  apply(snapshot) { state = snapshot; ensureOrderNumbers(false); query = ''; review = null; editingLine = null; editingAlias = null; render() },
+  apply(snapshot) { state = snapshot; ensureOrderNumbers(false); openLinkedOrder(); query = ''; review = null; editingLine = null; editingAlias = null; render() },
   status(message) {
     const label = $('#cloud-status')
     if (label) label.textContent = message

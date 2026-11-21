@@ -8,7 +8,7 @@ const read = key => {
 }
 const write = (key, value) => localStorage.setItem(key, JSON.stringify(value))
 let session = read(sessionKey)
-let hooks, timer, running, conflict = false
+let hooks, timer, running, refreshing, conflict = false
 let status = ''
 const invitation = typeof location === 'undefined' ? null : new URLSearchParams(location.hash.slice(1))
 let invitationToken = invitation?.get('type') === 'invite' ? invitation.get('access_token') : null
@@ -30,12 +30,14 @@ async function request(path, {method = 'GET', body, token, headers = {}} = {}) {
     signal: AbortSignal.timeout(15000)
   })
   const data = await response.json().catch(() => null)
-  if (!response.ok) throw Object.assign(new Error(data?.msg || data?.message || 'No se pudo conectar con Supabase.'), {status: response.status})
+  if (!response.ok) throw Object.assign(new Error(data?.msg || data?.message || data?.error || 'No se pudo conectar con Supabase.'), {status: response.status})
   return data
 }
 async function token() {
+  if (!session) throw Error('Inicia sesión para continuar.')
   if (session.expires_at <= Date.now() + 60000) {
-    saveSession(await request('/auth/v1/token?grant_type=refresh_token', {method:'POST', body:{refresh_token:session.refresh_token}}))
+    refreshing ??= request('/auth/v1/token?grant_type=refresh_token', {method:'POST', body:{refresh_token:session.refresh_token}}).then(saveSession).finally(() => { refreshing = null })
+    await refreshing
   }
   return session.access_token
 }
@@ -71,7 +73,7 @@ async function synchronize() {
       report('Otro equipo guardó cambios. Respalda este equipo antes de abrir la copia en línea.')
       return
     }
-    const headers = {Prefer:'return=representation'}
+    const headers = {Prefer:'return=representation', 'x-order-device':globalThis.orderPush?.deviceId() || ''}
     const revision = (cached.revision ?? 0) + 1
     let updated
     try {
@@ -124,6 +126,7 @@ async function logout() {
   if (running) await running
   if (workspace()?.dirty) throw Error('Hay cambios pendientes. Sincroniza o descarga un respaldo antes de cerrar la sesión.')
   if (!navigator.onLine) throw Error('Conéctate para cerrar la sesión.')
+  await globalThis.orderPush?.disconnect()
   await request('/auth/v1/logout?scope=local', {method:'POST', token:await token()})
   localStorage.removeItem(sessionKey)
   session = null
@@ -151,6 +154,7 @@ function init(callbacks) {
   void sync()
 }
 globalThis.orderCloud = {configured, init, local, sync, login, logout, useRemote, workspace, completeInvite,
+  pushRequest: async body => request('/functions/v1/order-push', {method:'POST', body, token:await token()}),
   invited: () => Boolean(invitationToken),
   profile: () => session?.user, status: () => status, conflict: () => conflict}
 })()
