@@ -42,5 +42,15 @@ begin
   update public.order_workspaces set snapshot=fixture where owner_id=owner;
   select count(*) into count_jobs from public.order_push_jobs where device_id=receiver;
   if count_jobs <> 2 then raise exception 'Stale confirmation generated event'; end if;
+  -- Reverse direction: the second device confirms a changed price.
+  perform set_config('request.headers',jsonb_build_object('x-order-device',receiver)::text,true);
+  ord := jsonb_set(jsonb_set(ord,'{lines,0,net}','120'),'{lines,0,gross}','143');
+  ord := jsonb_set(ord,'{agreements,push-test-vendor}',jsonb_build_object('version','[["push-test-line",2,120,143]]','changed',true));
+  fixture := jsonb_set(fixture,'{drafts}',(select jsonb_agg(case when value->>'id'='push-test-order' then ord else value end) from jsonb_array_elements(fixture->'drafts')));
+  update public.order_workspaces set snapshot=fixture where owner_id=owner;
+  select count(*) into count_jobs from public.order_push_jobs where device_id=actor;
+  if count_jobs <> 1 then raise exception 'Reverse-direction event missing'; end if;
+  select count(*) into count_jobs from public.order_push_jobs where device_id=receiver;
+  if count_jobs <> 2 then raise exception 'Second actor received its own event'; end if;
 end $$;
 rollback;
