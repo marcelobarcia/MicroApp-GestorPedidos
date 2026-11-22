@@ -170,6 +170,10 @@ button[hidden]{display:none}
 .purchase-total{background:var(--mint)}
 .purchase-panels{display:grid;grid-template-columns:minmax(0,1.7fr) minmax(0,1fr);gap:.75rem;align-items:start}
 .purchase-table{overflow-x:auto}
+.purchase-table{text-transform:uppercase}
+#purchase-detail{width:min(64rem,calc(100% - 2rem));max-height:90dvh;overflow:auto;border:2px solid var(--ink);border-radius:1rem;padding:1.25rem}
+#purchase-detail::backdrop{background:#0007}
+#purchase-detail .purchase-table{margin:1rem 0}
 .purchase-table th{position:static}
 .purchase-table :is(th,td):not(:first-child){text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
 .purchase-product{border:0;background:transparent;padding:.2rem 0;text-align:left;text-decoration:underline;text-underline-offset:.18em}

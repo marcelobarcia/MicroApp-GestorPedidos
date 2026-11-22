@@ -585,7 +585,7 @@ function renderPurchases() {
     </div><div id="purchase-report" aria-live="polite"></div>`
   updatePurchases()
 }
-function updatePurchases(restoreFocus = null) {
+function updatePurchases() {
   const report = $('#purchase-report')
   const [from, to] = purchaseRange
   const periods = purchasePeriods()
@@ -631,18 +631,34 @@ function updatePurchases(restoreFocus = null) {
     <div class="purchase-panels">
       <section class="card"><h2>Acumulado por producto</h2><div class="purchase-table" role="region" aria-label="Acumulado por producto" tabindex="0"><table>
       <thead><tr><th scope="col">Producto</th><th scope="col">Cantidad</th><th scope="col">Pedidos</th><th scope="col">Neto</th><th scope="col">Con IVA</th></tr></thead>
-      <tbody>${products.map(group => `<tr><td><button type="button" class="purchase-product" data-purchase-product="${h(group.key)}" aria-pressed="${group.key === purchaseProduct}">${h(group.name)}</button></td>
+      <tbody>${products.map(group => `<tr><td><button type="button" class="purchase-product" data-purchase-product="${h(group.key)}" aria-haspopup="dialog">${h(group.name.toLocaleUpperCase('es-CL'))}</button></td>
       <td>${fmt(group.quantity)} ${h(group.unit)}</td><td>${group.orders.size}</td><td>${clp(group.net)}</td><td>${clp(group.gross)}</td></tr>`).join('')}</tbody></table></div></section>
       <section class="card"><h2>Mayor gasto neto</h2><ol class="purchase-bars" aria-label="Hasta cinco productos por gasto neto">
-      ${products.slice(0, 5).map(group => `<li><div><span>${h(group.name)}</span><strong>${clp(group.net)}</strong></div>
+      ${products.slice(0, 5).map(group => `<li><div><span>${h(group.name.toLocaleUpperCase('es-CL'))}</span><strong>${clp(group.net)}</strong></div>
       <div class="purchase-track" aria-hidden="true"><span style="width:${100 * group.net / products[0].net}%"></span></div></li>`).join('')}</ol></section>
-    </div>
-    ${chosen ? `<section class="card"><h2>Detalle de ${h(chosen.name)}</h2><div class="purchase-table" role="region" aria-label="Detalle de compras" tabindex="0"><table>
+    </div>`
+  if(chosen) {
+    let dialog=$('#purchase-detail')
+    if(!dialog) {
+      dialog=document.createElement('dialog')
+      dialog.id='purchase-detail'
+      dialog.setAttribute('aria-labelledby','purchase-detail-title')
+      dialog.addEventListener('close',()=>{
+        const selected=purchaseProduct
+        purchaseProduct=null
+        ;[...document.querySelectorAll('[data-purchase-product]')].find(button=>button.dataset.purchaseProduct===selected)?.focus()
+      })
+      document.body.append(dialog)
+    }
+    dialog.innerHTML=`<h2 id="purchase-detail-title">${h(chosen.name.toLocaleUpperCase('es-CL'))}</h2><p>Pedidos del ${h(dateLabel(from))} al ${h(dateLabel(to))}</p><div class="purchase-table" role="region" aria-label="Pedidos del producto" tabindex="0"><table>
       <thead><tr><th scope="col">Proveedor y pedido</th><th scope="col">Fecha</th><th scope="col">Cantidad</th><th scope="col">Neto</th><th scope="col">Con IVA</th></tr></thead>
-      <tbody>${chosen.entries.map(({line, order, day, estimated}) => `<tr><td><strong>${h(vendor(line.vendorId)?.name || 'Proveedor')}</strong><br><small>N.º ${h(orderNumber(order))}</small></td>
+      <tbody>${chosen.entries.map(({line, order, day, estimated}) => `<tr><td><strong>${h(vendor(line.vendorId)?.name || 'Proveedor')}</strong><br><small>N.º ${h(orderNumber(order))}</small><br><button type="button" data-open="${h(order.id)}">Abrir pedido</button></td>
       <td>${h(dateLabel(day))}${estimated ? '<br><small>Fecha del pedido</small>' : ''}</td><td>${fmt(line.qty * line.size)} ${h(line.unit)}</td>
-      <td>${clp(line.qty * line.net)}</td><td>${clp(line.qty * line.gross)}</td></tr>`).join('')}</tbody></table></div></section>` : ''}`
-  if (restoreFocus) [...report.querySelectorAll('[data-purchase-product]')].find(button => button.dataset.purchaseProduct === restoreFocus)?.focus()
+      <td>${clp(line.qty * line.net)}</td><td>${clp(line.qty * line.gross)}</td></tr>`).join('')}</tbody></table></div>
+      <p><strong>Total: ${fmt(chosen.quantity)} ${h(chosen.unit)} · ${clp(chosen.gross)} con IVA</strong></p>
+      <form method="dialog"><button class="primary" autofocus>Cerrar</button></form>`
+    if(!dialog.open) dialog.showModal()
+  }
 }
 function renderGuide() {
   app.innerHTML = intro('Guía de uso', 'De la lista de precios al pedido.') + `<ol class="guide-grid">
@@ -893,8 +909,8 @@ document.addEventListener('click', e => {
     return
   }
   if (data.purchaseProduct) {
-    purchaseProduct = purchaseProduct === data.purchaseProduct ? null : data.purchaseProduct
-    updatePurchases(data.purchaseProduct)
+    purchaseProduct = data.purchaseProduct
+    updatePurchases()
     return
   }
   if ('vendorResponse' in data) {
@@ -1048,7 +1064,7 @@ document.addEventListener('click', e => {
     save(); renderCart()
     renderResults(false)
   }
-  if (data.open) { state.active = data.open; query = ''; editingLine = null; view = 'buy'; save(); render() }
+  if (data.open) { $('#purchase-detail')?.close(); state.active = data.open; query = ''; editingLine = null; view = 'buy'; save(); render() }
   if (data.delete && confirm('¿Eliminar este borrador?')) {
     state.drafts = state.drafts.filter(d => d.id !== data.delete)
     if (!state.drafts.length) freshOrder()
