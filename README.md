@@ -30,6 +30,8 @@ Cuando el otro equipo pulse **Ya lo envié** o confirme un pedido, recibirás un
 
 Los avisos pueden llegar con la pantalla bloqueada y no necesitan que la sesión de acceso siga vigente. Cerrar sesión expresamente desactiva los avisos en ese equipo. El sonido y la visualización en la pantalla bloqueada dependen de los permisos, volumen y modo No molestar del celular. En iPhone, abre la app instalada en la pantalla de inicio.
 
+Al recibir la confirmación de un pedido en otro equipo, la app abierta muestra su detalle hasta pulsar **Entendido**: proveedor, productos, cantidades, precios acordados y total confirmado. Si estaba cerrada, tocar la notificación abre ese detalle. El equipo que registra la confirmación continúa en su pantalla habitual. Las confirmaciones parciales distinguen los proveedores pendientes y el total de la parte ya confirmada.
+
 ### Servicio de notificaciones
 
 El esquema de `supabase/push-schema.sql` instala una cola privada por dispositivo, un disparador de cambios del espacio y un reintento por minuto. La función `supabase/functions/order-push/index.ts` valida la sesión al registrar/desactivar dispositivos; el despachador valida una credencial propia del servidor. Las claves VAPID se generan una sola vez en el servidor y quedan en una tabla sin acceso para clientes. No hay claves privadas en los archivos publicados.

@@ -1,0 +1,30 @@
+const {test}=require('node:test');
+const assert=require('node:assert/strict');
+const vm=require('node:vm');
+const fs=require('node:fs');
+const context={}; context.globalThis=context;
+vm.runInNewContext(fs.readFileSync(require('node:path').join(__dirname,'../dist/confirmation.js'),'utf8'),context);
+const detail=context.orderConfirmation;
+const line={id:'line',vendorId:'vendor',name:'Huesillos <extra>',qty:5,size:1,unit:'kg',net:6050,gross:7200};
+const version=JSON.stringify([['line',5,6050,7200]]);
+const before={drafts:[{id:'order',lines:[line]}]};
+const after={drafts:[{id:'order',lines:[line],agreements:{vendor:{version,changed:true,original:[{id:'line',gross:7500}]}}}]};
+test('receiver recognizes a new confirmation, but repeated sync and initial history stay quiet',()=>{
+  assert.equal(JSON.stringify(detail.received(before,after)),'["order"]');
+  assert.equal(detail.received(after,after).length,0);
+  assert.equal(detail.received({drafts:[]},after).length,0);
+  const stale=structuredClone(after); stale.drafts[0].lines[0].qty=6;
+  assert.equal(detail.received(before,stale).length,0);
+});
+test('detail shows agreed prices, kilograms and confirmed totals while excluding pending suppliers',()=>{
+  const order=structuredClone(after.drafts[0]);
+  order.lines.push({...line,id:'pending',vendorId:'other',gross:999999});
+  const html=detail.html(order,[{id:'vendor',name:'Veguita'}],'123');
+  assert(html.includes('5 kg'));
+  assert(html.includes('Huesillos &lt;extra&gt;'));
+  assert(html.includes('Confirmado con cambios'));
+  assert(html.includes('Antes'));
+  assert(html.includes('36.000'));
+  assert(!html.includes('999.999'));
+  assert(html.includes('Falta la confirmación de 1 proveedor'));
+});

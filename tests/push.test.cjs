@@ -44,6 +44,10 @@ test('service worker shows persistent audible notification and rejects external 
   handlers.notificationclick({notification:{close(){},data:shown[0][1].data},waitUntil:p=>pending=p});
   await pending;
   assert.equal(opened[0],'https://example.test/app/');
+  handlers.push({data:{json:()=>({title:'Pedido confirmado',body:'Proveedor',url:'./?order=order'})},waitUntil:p=>pending=p});
+  await pending;
+  assert.equal(new URL(shown[1][1].data.url).searchParams.get('confirmed'),'1');
+  assert.equal(new URL(shown[1][1].data.url).searchParams.get('order'),'order');
 });
 
 test('iPhone can subscribe despite missing standalone flags, directly inside the tap',async()=>{

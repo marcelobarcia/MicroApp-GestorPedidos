@@ -89,6 +89,7 @@ if('serviceWorker' in navigator) navigator.serviceWorker.addEventListener('messa
   const banner=document.createElement('div'); banner.className='push-banner'; banner.setAttribute('role','status')
   banner.textContent=event.data.title+' · '+event.data.body
   document.body.append(banner); setTimeout(()=>banner.remove(),8000)
+  document.dispatchEvent(new CustomEvent('order-notification',{detail:{orderId:event.data.orderId,confirmed:event.data.title?.startsWith('Pedido confirmado')}}))
 })
 globalThis.orderPush={deviceId,panel,refresh,disconnect}
 })()

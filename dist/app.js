@@ -18,6 +18,7 @@ let review = null
 let editingLine = null
 let editingAlias = null
 let responseEditor = null
+const shownConfirmationDetails = new Map()
 let purchaseRange
 let purchaseProduct = null
 let busy = false
@@ -475,6 +476,24 @@ function freshOrder() {
   state.drafts = state.drafts.filter(order => order.saved || order.lines.length || order.name !== 'Pedido nuevo')
   state.drafts.push(next)
   state.active = next.id
+}
+function showReceivedConfirmation(orderId) {
+  const order=state.drafts.find(item=>item.id===orderId)
+  if(!order) return
+  const content=globalThis.orderConfirmation?.html(order,state.vendors,orderNumber(order))
+  if(!content) return
+  if(shownConfirmationDetails.get(orderId)===content) return
+  shownConfirmationDetails.set(orderId,content)
+  let dialog=$('#confirmation-detail')
+  if(!dialog) {
+    dialog=document.createElement('dialog')
+    dialog.id='confirmation-detail'
+    dialog.setAttribute('aria-labelledby','confirmation-title')
+    document.body.append(dialog)
+  }
+  dialog.innerHTML=content
+  if(orderId===linkedOrder) linkedConfirmation=false
+  if(!dialog.open) dialog.showModal()
 }
 function renderCart() {
   const target = $('#cart')
@@ -1199,6 +1218,7 @@ async function restoreWorkspace(file) {
   } catch (error) { notify(error.message, true) }
 }
 const linkedOrder = new URLSearchParams(location.search).get('order')
+let linkedConfirmation = new URLSearchParams(location.search).get('confirmed') === '1'
 function openLinkedOrder() {
   if (!linkedOrder) return
   const order=state.drafts.find(item=>item.id===linkedOrder)
@@ -1210,13 +1230,28 @@ openLinkedOrder()
 render()
 cloud?.init({
   defaults, local:localData,
-  apply(snapshot) { state = snapshot; ensureOrderNumbers(false); openLinkedOrder(); query = ''; review = null; editingLine = null; editingAlias = null; render() },
+  apply(snapshot) {
+    const received=globalThis.orderConfirmation?.received(state,snapshot) || []
+    state = snapshot; ensureOrderNumbers(false); openLinkedOrder(); query = ''; review = null; editingLine = null; editingAlias = null; render()
+    if(received.length) showReceivedConfirmation(received[received.length-1])
+    else if(linkedConfirmation) showReceivedConfirmation(linkedOrder)
+  },
   status(message) {
     const label = $('#cloud-status')
     if (label) label.textContent = message
     const resolve = $('#use-cloud')
     if (resolve) resolve.hidden = !cloud.conflict()
   }
+})
+if(linkedConfirmation) {
+  if(cloud?.profile()) void cloud.sync().then(()=>{ if(cloud.status()==='Sincronizado.') showReceivedConfirmation(linkedOrder) })
+  else if(!navigator.onLine) showReceivedConfirmation(linkedOrder)
+}
+document.addEventListener('order-notification',event=>{
+  // Read the synchronized workspace rather than using prices embedded in a push.
+  if(cloud?.profile()) void cloud.sync().then(()=>{
+    if(event.detail.confirmed && cloud.status()==='Sincronizado.') showReceivedConfirmation(event.detail.orderId)
+  })
 })
 if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator && ['https:', 'http:'].includes(location.protocol)) {
   void navigator.serviceWorker.register('offline.js').catch(() => {})

@@ -1,6 +1,6 @@
-const version = 'gestor-pedidos-offline-v21'
+const version = 'gestor-pedidos-offline-v22'
 const assets = [
-  './', './index.html', './style.css?v=21', './app.js?v=21', './catalog.js?v=16', './cloud.js?v=21', './push.js?v=21', './cloud-config.js',
+  './', './index.html', './style.css?v=22', './app.js?v=22', './catalog.js?v=16', './cloud.js?v=22', './push.js?v=22', './confirmation.js?v=22', './cloud-config.js',
   './plantilla.xlsx', './manifest.webmanifest', './icons/icon-192.png', './icons/icon-512.png',
   './icons/maskable-512.png', './icons/apple-touch-icon.png'
 ]
@@ -23,10 +23,11 @@ self.addEventListener('push', event => {
   try { payload={...payload,...event.data.json()} } catch {}
   const target=new URL(payload.url || './',self.registration.scope)
   const allowed=new URL(self.registration.scope)
+  if(payload.title?.startsWith('Pedido confirmado')) target.searchParams.set('confirmed','1')
   const url=target.origin===allowed.origin && target.pathname.startsWith(allowed.pathname) ? target.href : allowed.href
   event.waitUntil(Promise.all([
     self.registration.showNotification(payload.title,{body:payload.body,icon:'./icons/icon-192.png',badge:'./icons/icon-192.png',tag:payload.tag,silent:false,data:{url}}),
-    self.clients.matchAll({type:'window',includeUncontrolled:true}).then(clients=>clients.forEach(client=>client.postMessage({type:'order-push',title:payload.title,body:payload.body})))
+    self.clients.matchAll({type:'window',includeUncontrolled:true}).then(clients=>clients.forEach(client=>client.postMessage({type:'order-push',title:payload.title,body:payload.body,orderId:payload.orderId})))
   ]))
 })
 self.addEventListener('notificationclick',event=>{
